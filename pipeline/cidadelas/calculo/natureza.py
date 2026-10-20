@@ -33,14 +33,26 @@ def _disco(raio_km: float, transformacao: Affine) -> np.ndarray:
     return ((x * dx) ** 2 + (y * dy) ** 2 <= raio_km ** 2).astype(np.float32)
 
 
-def _perto_de_casa(cfg: dict) -> pd.DataFrame:
+def percentual_no_raio(lon: np.ndarray, lat: np.ndarray, medidas: dict[str, tuple[list[str], float]]) -> dict[str, np.ndarray]:
+    """Para cada ponto, % da terra no raio ocupada pelos grupos de classe. medidas: indicador -> (grupos, raio em km)."""
     grade = np.load(GRADE)
     transformacao = Affine(*grade["transformacao"])
+    col, lin = (~transformacao) * (lon, lat)
+    col, lin = col.astype(int), lin.astype(int)
+    resultado = {}
+    for indicador, (grupos, raio) in medidas.items():
+        disco = _disco(raio, transformacao)
+        # % da terra no raio (água e mar fora da conta, senão cidade de praia perde para o oceano)
+        classe_no_raio = fftconvolve(sum(grade[g] for g in grupos), disco, mode="same")[lin, col]
+        terra_no_raio = fftconvolve(grade["terra"], disco, mode="same")[lin, col]
+        resultado[indicador] = 100 * np.clip(classe_no_raio / np.maximum(terra_no_raio, 1e-6), 0, 1)
+    return resultado
+
+
+def _perto_de_casa(cfg: dict) -> pd.DataFrame:
     setores = gpd.read_file(SETORES, columns=["CD_MUN", "v0001"])
     setores = setores[setores["v0001"] > 0]
     ponto = setores.geometry.representative_point()
-    col, lin = (~transformacao) * (ponto.x.to_numpy(), ponto.y.to_numpy())
-    col, lin = col.astype(int), lin.astype(int)
 
     natureza = cfg["topicos"]["natureza"]
     medidas = {
@@ -48,13 +60,10 @@ def _perto_de_casa(cfg: dict) -> pd.DataFrame:
         "verde_regiao": (VERDE, natureza["raio_regiao_km"]),
         "area_urbana": (["urbana"], natureza["raio_perto_km"]),
     }
-    por_setor = pd.DataFrame({"cod_ibge": setores["CD_MUN"].astype(int).to_numpy(), "pop": setores["v0001"].to_numpy()})
-    for indicador, (grupos, raio) in medidas.items():
-        disco = _disco(raio, transformacao)
-        # % da terra no raio (água e mar fora da conta, senão cidade de praia perde para o oceano)
-        classe_no_raio = fftconvolve(sum(grade[g] for g in grupos), disco, mode="same")[lin, col]
-        terra_no_raio = fftconvolve(grade["terra"], disco, mode="same")[lin, col]
-        por_setor[indicador] = 100 * np.clip(classe_no_raio / np.maximum(terra_no_raio, 1e-6), 0, 1)
+    por_setor = pd.DataFrame({
+        "cod_ibge": setores["CD_MUN"].astype(int).to_numpy(), "pop": setores["v0001"].to_numpy(),
+        **percentual_no_raio(ponto.x.to_numpy(), ponto.y.to_numpy(), medidas),
+    })
 
     unidades = {
         "verde_perto": f"% de mata, campo ou sítio a até {medidas['verde_perto'][1]} km de casa (média dos moradores)",

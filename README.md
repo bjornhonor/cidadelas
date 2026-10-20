@@ -12,6 +12,15 @@ python -m venv .venv
 .venv/Scripts/python -m cidadelas status          # quando cada fonte foi coletada
 ```
 
+Cidade por dentro (por enquanto só Valinhos): compara zonas da cidade entre si. No app, abra a cidade e clique em
+"Ver por dentro" (ou vá direto em `#cidade/valinhos`).
+
+```bash
+.venv/Scripts/python -m cidadelas coletar ssp_bo         # BOs da SSP com bairro e coordenada (~800 MB)
+.venv/Scripts/python -m cidadelas coletar censo_setores  # água e esgoto por setor censitário
+.venv/Scripts/python -m cidadelas cidade valinhos        # config em config/cidades/valinhos.yaml
+```
+
 Os arquivos baixados ficam em `data/raw/`, e rodar de novo reaproveita o cache. Use `--forcar` para baixar tudo outra vez.
 O banco local fica em `data/cidadelas.duckdb`. O `calcular` também grava `web/public/data/`, que é o que o app lê.
 

@@ -44,6 +44,19 @@ function corPreenchimento(tema: Tema) {
 
 const LARGURA_TOOLTIP = 232
 
+/** Caixa que contém a malha toda: o mapa abre enquadrado no estado ou na cidade. */
+function limites(malha: FeatureCollection): [[number, number], [number, number]] {
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity]
+  const visitar = (c: unknown): void => {
+    if (typeof (c as number[])[0] === 'number') {
+      const [x, y] = c as number[]
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y)
+    } else (c as unknown[]).forEach(visitar)
+  }
+  for (const f of malha.features) if (f.geometry.type !== 'GeometryCollection') visitar(f.geometry.coordinates)
+  return [[x0, y0], [x1, y1]]
+}
+
 interface Props {
   malha: FeatureCollection
   notas: Map<number, number | null>
@@ -105,7 +118,8 @@ export function Mapa(props: Props) {
           },
         ],
       },
-      bounds: [[-53.2, -25.4], [-44.1, -19.7]],
+      bounds: limites(malha),
+      fitBoundsOptions: { padding: 24 },
       attributionControl: false,
     })
     m.addControl(new NavigationControl({ showCompass: false }), 'top-right')

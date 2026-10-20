@@ -1,4 +1,7 @@
-from . import anatel, aneel, cnes, deslocamento, desastres, entorno, fipezap, ibge, mapbiomas, rotas, sinisa, sisam, ssp, vias
+from . import (
+    anatel, aneel, censo_setores, cnes, deslocamento, desastres, entorno, fipezap, ibge, mapbiomas, rotas, sinisa, sisam,
+    ssp, ssp_bo, vias,
+)
 
 # Ordem importa: outras fontes dependem da tabela de municípios do IBGE, e rotas depende do CNES
 FONTES = {
@@ -16,4 +19,7 @@ FONTES = {
     "fipezap": fipezap.coletar,
     "vias": vias.coletar,  # depois de rotas, que baixa o OSM e os setores
     "deslocamento": deslocamento.coletar,  # depois de rotas, que cria os pontos de origem
+    # Só para o detalhe dentro de uma cidade (cidade/)
+    "ssp_bo": ssp_bo.coletar,
+    "censo_setores": censo_setores.coletar,
 }

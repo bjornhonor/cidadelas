@@ -20,6 +20,7 @@ export interface ConfigTopico {
 export interface Config {
   topicos: Record<string, ConfigTopico>
   filtros_apenas: string[]
+  corte?: number // fração dos extremos que não estica a escala; padrão 0,02 (dentro da cidade é 0)
 }
 
 export interface ValorIndicador {
@@ -42,6 +43,7 @@ export interface Municipio {
   populacao: number
   regiao_imediata: string
   regiao_intermediaria: string
+  bairros?: string[] // só nas zonas de uma cidade: bairros do OpenStreetMap dentro da zona
   indicadores: Record<string, ValorIndicador>
 }
 
@@ -50,7 +52,16 @@ export interface Dados {
   coletas: { fonte: string; coletado_em: string; referencia: string }[]
   config: Config
   unidades: Record<string, string>
+  // Só nos dados de uma cidade por dentro (public/data/cidades/): aí cada "município" é uma zona
+  cidade?: { cod: number; nome: string; anos_crime: number }
   municipios: Municipio[]
+}
+
+// public/data/cidades/index.json: cidades que têm a visão por dentro
+export interface CidadeDetalhada {
+  cod: number
+  slug: string
+  nome: string
 }
 
 export interface Pesos {

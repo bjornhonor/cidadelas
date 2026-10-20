@@ -13,6 +13,7 @@ interface Props {
   linhas: LinhaRanking[]
   topicos: string[]
   tempos: Map<number, TempoTrabalho> | null // só no modo presencial
+  cidade: string | null // dentro de uma cidade, as linhas são zonas
   selecionado: number | null
   onSelecionar: (cod: number) => void
 }
@@ -35,7 +36,7 @@ function milHabitantes(p: number) {
     : p >= 1_000 ? `${formatarNumero(p / 1_000)} mil hab.` : `${formatarNumero(p)} hab.`
 }
 
-export function Ranking({ linhas, topicos, tempos, selecionado, onSelecionar }: Props) {
+export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSelecionar }: Props) {
   const [pagina, setPagina] = useState(1)
   const paginas = Math.max(1, Math.ceil(linhas.length / POR_PAGINA))
   const atual = Math.min(pagina, paginas) // o filtro pode encolher a lista enquanto se está numa página adiante
@@ -46,8 +47,8 @@ export function Ranking({ linhas, topicos, tempos, selecionado, onSelecionar }: 
     <div className="ranking">
       <div className="ranking-topo">
         <div>
-          <h2>Ranking dos Municípios</h2>
-          <p>Ordenado pela nota com os pesos escolhidos</p>
+          <h2>{cidade ? `Zonas de ${cidade}` : 'Ranking dos Municípios'}</h2>
+          <p>{cidade ? 'Notas comparando só as zonas entre si (a pior tira 0, a melhor 100)' : 'Ordenado pela nota com os pesos escolhidos'}</p>
         </div>
         <span className="aptas">{linhas.length} aptas</span>
       </div>
@@ -85,7 +86,7 @@ export function Ranking({ linhas, topicos, tempos, selecionado, onSelecionar }: 
           <thead>
             <tr>
               <th>#</th>
-              <th>Cidade</th>
+              <th>{cidade ? 'Zona' : 'Cidade'}</th>
               <th className="num">Habitantes</th>
               {tempos && <th className="num" title="de carro, sem trânsito">Trajeto</th>}
               <th className="num geral">Geral</th>
@@ -122,12 +123,12 @@ export function Ranking({ linhas, topicos, tempos, selecionado, onSelecionar }: 
             })}
           </tbody>
         </table>
-        {linhas.length === 0 && <p className="vazio">Nenhuma cidade com esses filtros.</p>}
+        {linhas.length === 0 && <p className="vazio">Nenhuma {cidade ? 'zona' : 'cidade'} com esses filtros.</p>}
       </div>
 
       <div className="paginacao">
         <span>
-          {linhas.length ? `Exibindo ${inicio + 1}–${inicio + visiveis.length} de ${linhas.length}` : 'Nenhuma cidade'}
+          {linhas.length ? `Exibindo ${inicio + 1}–${inicio + visiveis.length} de ${linhas.length}` : `Nenhuma ${cidade ? 'zona' : 'cidade'}`}
         </span>
         <div>
           <button type="button" disabled={atual <= 1} onClick={() => setPagina(atual - 1)}>Anterior</button>

@@ -10,16 +10,19 @@ interface Props {
   config: Config
   unidades: Record<string, string>
   tempo: TempoTrabalho | null // até o trabalho, só no modo presencial
+  anosCrime: number // janela dos casos de crime
+  zona: boolean // é uma zona de uma cidade, não um município
+  porDentro: string | null // a cidade tem a visão por dentro (slug)
   onFechar: () => void
 }
 
 /** Linha de apoio abaixo do nome do indicador, com o que cada tópico tem de específico. */
-function complemento(v: ValorIndicador, unidade: string): string {
+function complemento(v: ValorIndicador, unidade: string, anosCrime: number): string {
   const partes: string[] = []
   if (v.minutos != null) partes.push(`${formatarNumero(v.minutos)} min de carro, em média, até a mais próxima`)
   if (v.compra_m2 != null) partes.push(`R$ ${formatarNumero(v.compra_m2)} o m² para comprar`)
   if (v.estimado != null) partes.push(v.estimado ? 'moradia estimada (cidade fora do FipeZap)' : 'moradia pelo FipeZap')
-  if (v.eventos != null) partes.push(`${formatarNumero(v.eventos)} casos em 5 anos`)
+  if (v.eventos != null) partes.push(`${formatarNumero(v.eventos)} casos em ${anosCrime} anos`)
   if (v.bruto != null) partes.push(`sem ajuste: ${formatarNumero(v.bruto, 1)}`)
   if (v.peso_local != null) partes.push(`${formatarNumero(v.peso_local * 100)}% dado local`)
   if (v.mortos) partes.push(`${formatarNumero(v.mortos)} mortos`)
@@ -29,13 +32,18 @@ function complemento(v: ValorIndicador, unidade: string): string {
   return partes.join(' · ')
 }
 
-export function Detalhe({ municipio: m, notas, posicao, config, unidades, tempo, onFechar }: Props) {
+export function Detalhe({ municipio: m, notas, posicao, config, unidades, tempo, anosCrime, zona, porDentro, onFechar }: Props) {
   return (
     <div className="detalhe">
       <div className="detalhe-topo">
         <button type="button" className="link" onClick={onFechar}>← voltar ao ranking</button>
         <h2>{m.nome}</h2>
-        <p>{formatarNumero(m.populacao)} habitantes · {m.regiao_imediata} · {m.regiao_intermediaria}</p>
+        <p>
+          {formatarNumero(m.populacao)} habitantes
+          {zona ? ` · zona ${m.cod} de ${m.regiao_imediata}` : ` · ${m.regiao_imediata} · ${m.regiao_intermediaria}`}
+        </p>
+        {m.bairros && m.bairros.length > 0 && <p className="detalhe-bairros">Bairros: {m.bairros.join(', ')}</p>}
+        {porDentro && <a className="botao-primario ver-por-dentro" href={`#cidade/${porDentro}`}>Ver por dentro →</a>}
       </div>
       <div className="detalhe-corpo">
         <div className="destaques">
@@ -87,7 +95,7 @@ export function Detalhe({ municipio: m, notas, posicao, config, unidades, tempo,
                         <tr key={ind}>
                           <td>
                             {rotuloIndicador(ind)}
-                            <small className="muted">{complemento(v, unidades[ind] ?? '')}</small>
+                            <small className="muted">{complemento(v, unidades[ind] ?? '', anosCrime)}</small>
                           </td>
                           <td className="num forte">{formatarNumero(notas.indicadores[ind], 0)}</td>
                           <td className="num">{formatarNumero(v.valor, v.valor >= 100 ? 0 : 1)}</td>

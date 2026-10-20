@@ -10,13 +10,15 @@ function quantil(ordenados: number[], q: number): number {
 }
 
 /**
- * Converte cada indicador numa nota 0..100 comparando os 645 municípios entre si, com corte nos extremos.
+ * Converte cada indicador numa nota 0..100 comparando os 645 municípios entre si (ou as zonas de uma cidade), com
+ * corte nos extremos (config.corte; 0 = o pior tira 0 e o melhor 100).
  * Escala logarítmica por padrão (taxas de crime variam em ordens de grandeza); "raiz" fica entre log e linear;
  * "absoluta" usa o valor como nota.
  * Não depende de pesos nem de filtros: filtrar não muda a nota de ninguém.
  */
 export function notasPorIndicador(municipios: Municipio[], config: Config): Map<number, Record<string, number>> {
   const resultado = new Map<number, Record<string, number>>(municipios.map((m) => [m.cod, {}]))
+  const corte = config.corte ?? CORTE
   for (const topico of Object.values(config.topicos)) {
     for (const [indicador, { sentido, escala = 'log' }] of Object.entries(topico.indicadores)) {
       const comDado = municipios.filter((m) => m.indicadores[indicador])
@@ -33,8 +35,8 @@ export function notasPorIndicador(municipios: Municipio[], config: Config): Map<
         return escala === 'log' ? Math.log1p(v) : escala === 'raiz' ? Math.sqrt(Math.max(v, 0)) : v
       })
       const ordenados = [...x].sort((a, b) => a - b)
-      const min = quantil(ordenados, CORTE)
-      const max = quantil(ordenados, 1 - CORTE)
+      const min = quantil(ordenados, corte)
+      const max = quantil(ordenados, 1 - corte)
       comDado.forEach((m, i) => {
         const relativo = max > min ? (Math.min(Math.max(x[i], min), max) - min) / (max - min) : 0.5
         resultado.get(m.cod)![indicador] = 100 * (sentido === 'menor_melhor' ? 1 - relativo : relativo)

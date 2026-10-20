@@ -3,6 +3,7 @@
     python -m cidadelas coletar todas [--forcar]
     python -m cidadelas calcular
     python -m cidadelas status
+    python -m cidadelas cidade valinhos [--rotear]
 """
 
 import argparse
@@ -38,6 +39,9 @@ def main() -> None:
 
     sub.add_parser("calcular", help="calcula os indicadores a partir das fontes coletadas")
     sub.add_parser("status", help="mostra quando cada fonte foi coletada")
+    p_cidade = sub.add_parser("cidade", help="calcula os indicadores por zona de uma cidade (config/cidades/)")
+    p_cidade.add_argument("nome", help="nome do arquivo em config/cidades/, ex.: valinhos")
+    p_cidade.add_argument("--rotear", action="store_true", help="refaz as rotas de carro dos setores")
 
     args = parser.parse_args()
     con = conectar()
@@ -64,6 +68,10 @@ def main() -> None:
         con.execute("CREATE OR REPLACE TABLE indicadores AS SELECT * FROM indicadores_novos")
         print(indicadores.groupby("topico")["indicador"].nunique().to_string())
         exportar(con, indicadores, cfg)
+    elif args.comando == "cidade":
+        from . import cidade  # importa geopandas, osmium e r5py só quando precisa
+
+        cidade.calcular(con, config.carregar(), args.nome, rotear_de_novo=args.rotear)
     elif args.comando == "status":
         for fonte, coletado_em, referencia in con.execute("SELECT * FROM coletas ORDER BY fonte").fetchall():
             print(f"{fonte:12} coletado em {coletado_em}  ({referencia})")

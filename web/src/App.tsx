@@ -1,6 +1,6 @@
 import type { FeatureCollection } from 'geojson'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Dados, Notas, Pesos } from './types'
+import type { CidadeDetalhada, Dados, Notas, Pesos } from './types'
 import { combinarNotas, notasPorIndicador, pesosIniciais } from './notas'
 import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from './rotulos'
 import { lerTema, salvarTema, type Tema } from './tema'
@@ -15,12 +15,19 @@ import {
   type Deslocamento, type Trabalho as TipoTrabalho,
 } from './deslocamento'
 
-const CHAVE_PESOS = 'cidadelas:pesos'
 const ESCALA_MINUTOS = 120 // cor do mapa por tempo: satura em 2 h
 
-function lerPesosSalvos(padrao: Pesos): Pesos {
+// Cada visão guarda os seus pesos: os do estado não servem para as zonas de uma cidade
+const chavePesos = (slug: string | null) => (slug ? `cidadelas:pesos:${slug}` : 'cidadelas:pesos')
+
+/** "#cidade/valinhos" abre a cidade por dentro; sem hash, o estado. */
+function lerSlug(): string | null {
+  return /^#cidade\/([a-z0-9-]+)$/.exec(window.location.hash)?.[1] ?? null
+}
+
+function lerPesosSalvos(padrao: Pesos, chave: string): Pesos {
   try {
-    const salvo = JSON.parse(localStorage.getItem(CHAVE_PESOS) ?? 'null') as Pesos | null
+    const salvo = JSON.parse(localStorage.getItem(chave) ?? 'null') as Pesos | null
     if (!salvo) return padrao
     // Mescla com o padrão: indicadores novos no config ganham o peso padrão
     return {
@@ -36,11 +43,13 @@ function lerPesosSalvos(padrao: Pesos): Pesos {
 }
 
 /** Baixa o ranking filtrado em CSV (separado por ponto e vírgula, como o Excel em português espera). */
-function exportarCsv(linhas: LinhaRanking[], topicos: string[], minutos: (cod: number) => number | null) {
+function exportarCsv(
+  linhas: LinhaRanking[], topicos: string[], minutos: (cod: number) => number | null, slug: string | null,
+) {
   const comTempo = linhas.some((l) => minutos(l.municipio.cod) != null)
   const numero = (v: number | null) => (v == null ? '' : formatarNumero(v, 1))
   const cabecalho = [
-    'Posição', 'Município', 'População', 'Região', ...(comTempo ? ['Minutos até o trabalho'] : []),
+    'Posição', slug ? 'Zona' : 'Município', 'População', 'Região', ...(comTempo ? ['Minutos até o trabalho'] : []),
     'Nota geral', ...topicos.map((t) => TOPICOS[t] ?? t),
   ]
   const corpo = linhas.map(({ posicao, municipio: m, notas }) => [
@@ -53,45 +62,69 @@ function exportarCsv(linhas: LinhaRanking[], topicos: string[], minutos: (cod: n
   const url = URL.createObjectURL(new Blob(['﻿' + texto], { type: 'text/csv;charset=utf-8' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = 'cidadelas-ranking.csv'
+  a.download = slug ? `cidadelas-${slug}-zonas.csv` : 'cidadelas-ranking.csv'
   a.click()
   URL.revokeObjectURL(url)
 }
 
-function salvarPesos(p: Pesos) {
+function salvarPesos(p: Pesos, chave: string) {
   try {
-    localStorage.setItem(CHAVE_PESOS, JSON.stringify(p))
+    localStorage.setItem(chave, JSON.stringify(p))
   } catch {
     // navegação privada ou armazenamento bloqueado: os pesos valem só nesta sessão
   }
 }
 
 export default function App() {
-  const [dados, setDados] = useState<Dados | null>(null)
-  const [malha, setMalha] = useState<FeatureCollection | null>(null)
-  const [erro, setErro] = useState<string | null>(null)
+  const [slug, setSlug] = useState(lerSlug)
+  const [carregado, setCarregado] = useState<{ slug: string | null; dados: Dados; malha: FeatureCollection } | null>(null)
+  const [cidades, setCidades] = useState<CidadeDetalhada[]>([])
+  const [erro, setErro] = useState<{ slug: string | null; texto: string } | null>(null) // do carregamento de qual visão
 
   useEffect(() => {
-    Promise.all([
-      fetch('/data/cidadelas.json').then((r) => r.json()),
-      fetch('/data/malha_sp.geojson').then((r) => r.json()),
-    ])
-      .then(([d, g]) => {
-        setDados(d)
-        setMalha(g)
-      })
-      .catch(() => setErro('Não encontrei os dados. Rode `python -m cidadelas calcular` na raiz do projeto.'))
+    const mudou = () => setSlug(lerSlug())
+    window.addEventListener('hashchange', mudou)
+    return () => window.removeEventListener('hashchange', mudou)
   }, [])
 
-  if (erro) return <p className="aviso">{erro}</p>
-  if (!dados || !malha) return <p className="aviso">Carregando…</p>
-  return <Painel dados={dados} malha={malha} />
+  useEffect(() => {
+    // Opcional: sem nenhuma cidade calculada, o app só não mostra o "ver por dentro"
+    fetch('/data/cidades/index.json').then((r) => r.json()).then(setCidades).catch(() => setCidades([]))
+  }, [])
+
+  useEffect(() => {
+    let cancelado = false
+    const [arquivo, contorno, comando] = slug
+      ? [`/data/cidades/${slug}.json`, `/data/cidades/${slug}.geojson`, `python -m cidadelas cidade ${slug}`]
+      : ['/data/cidadelas.json', '/data/malha_sp.geojson', 'python -m cidadelas calcular']
+    Promise.all([fetch(arquivo).then((r) => r.json()), fetch(contorno).then((r) => r.json())])
+      .then(([dados, malha]) => {
+        if (!cancelado) setCarregado({ slug, dados, malha })
+      })
+      .catch(() => {
+        if (!cancelado) setErro({ slug, texto: `Não encontrei os dados. Rode \`${comando}\` na raiz do projeto.` })
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [slug])
+
+  if (erro?.slug === slug) return <p className="aviso">{erro.texto}</p>
+  if (!carregado || carregado.slug !== slug) return <p className="aviso">Carregando…</p>
+  return <Painel key={slug ?? 'estado'} slug={slug} dados={carregado.dados} malha={carregado.malha} cidades={cidades} />
 }
 
-function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
+function Painel({ slug, dados, malha, cidades }: {
+  slug: string | null
+  dados: Dados
+  malha: FeatureCollection
+  cidades: CidadeDetalhada[]
+}) {
   const { config, municipios } = dados
+  const cidade = dados.cidade ?? null // dentro de uma cidade, cada "município" é uma zona
+  const chave = chavePesos(slug)
   const padrao = useMemo(() => pesosIniciais(config), [config])
-  const [pesos, setPesos] = useState(() => lerPesosSalvos(padrao))
+  const [pesos, setPesos] = useState(() => lerPesosSalvos(padrao, chave))
   const [filtros, setFiltros] = useState<Filtros>({ populacaoMin: 0, regiao: '', busca: '', tempoMax: 0 })
   const [corPor, setCorPor] = useState('geral')
   const [selecionado, setSelecionado] = useState<number | null>(null)
@@ -103,7 +136,7 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
 
   const mudarPesos = (p: Pesos) => {
     setPesos(p)
-    salvarPesos(p)
+    salvarPesos(p, chave)
   }
   const mudarTema = (t: Tema) => {
     salvarTema(t) // antes do render: o mapa troca as cores logo em seguida
@@ -115,7 +148,8 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
   }
 
   // A matriz de tempos (~2,6 MB) só é baixada quando há local de trabalho
-  const local = trabalho.modo === 'presencial' ? trabalho.local : null
+  // O tempo até o trabalho é por município: dentro de uma cidade ele não separa as zonas
+  const local = trabalho.modo === 'presencial' && !cidade ? trabalho.local : null
   const precisaDeslocamento = local != null
   useEffect(() => {
     if (!precisaDeslocamento || pedido.current) return
@@ -154,7 +188,7 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
   const visiveis = useMemo(() => new Set(municipios
     .filter((m) => m.populacao >= filtros.populacaoMin)
     .filter((m) => !filtros.regiao || m.regiao_intermediaria === filtros.regiao)
-    .filter((m) => !busca || m.nome.toLocaleLowerCase('pt-BR').includes(busca))
+    .filter((m) => !busca || [m.nome, ...(m.bairros ?? [])].some((n) => n.toLocaleLowerCase('pt-BR').includes(busca)))
     .filter((m) => !tempoMax || (tempos?.get(m.cod)?.minutos ?? Infinity) <= tempoMax)
     .map((m) => m.cod)), [municipios, filtros.populacaoMin, filtros.regiao, busca, tempoMax, tempos])
 
@@ -238,10 +272,12 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
           <div className="meta-dados">
             <span className="pulso" />
             <span>
-              {municipios.length} municípios de SP · {dados.coletas.length} fontes integradas · calculado em{' '}
+              {cidade ? `${cidade.nome} por dentro: ${municipios.length} zonas` : `${municipios.length} municípios de SP`}
+              {' '}· {dados.coletas.length} fontes integradas · calculado em{' '}
               {new Date(`${dados.gerado_em}T12:00`).toLocaleDateString('pt-BR')}
             </span>
           </div>
+          {cidade && <a className="link voltar-estado" href="#">← todos os municípios</a>}
         </div>
         <div className="acoes">
           <details className="fontes">
@@ -264,7 +300,7 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
           <button
             type="button" className="botao-primario" disabled={!linhas.length}
             title="Baixar o ranking filtrado em CSV"
-            onClick={() => exportarCsv(linhas, topicosVisiveis, (cod) => tempos?.get(cod)?.minutos ?? null)}
+            onClick={() => exportarCsv(linhas, topicosVisiveis, (cod) => tempos?.get(cod)?.minutos ?? null, slug)}
           >
             <IconeBaixar /> Exportar
           </button>
@@ -272,7 +308,8 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
       </header>
 
       <Controles
-        trabalho={
+        cidade={cidade?.nome ?? null}
+        trabalho={cidade ? null : (
           <Trabalho
             trabalho={trabalho}
             tempoMax={filtros.tempoMax}
@@ -283,7 +320,7 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
             onTempoMax={(minutos) => setFiltros({ ...filtros, tempoMax: minutos })}
             onMarcando={setMarcando}
           />
-        }
+        )}
         config={config}
         pesos={pesos}
         topicosComDado={topicosComDado}
@@ -307,7 +344,7 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
               {tempos && <option value="trabalho">Tempo até o trabalho</option>}
             </select>
           </label>
-          <span className="no-filtro">{linhas.length} cidades no filtro</span>
+          <span className="no-filtro">{linhas.length} {cidade ? 'zonas' : 'cidades'} no filtro</span>
           {marcando && <span className="marcando-aviso">Clique no mapa onde fica o trabalho</span>}
         </div>
         <Mapa
@@ -338,11 +375,14 @@ function Painel({ dados, malha }: { dados: Dados; malha: FeatureCollection }) {
             config={config}
             unidades={dados.unidades}
             tempo={tempos?.get(municipioSelecionado.cod) ?? null}
+            anosCrime={cidade?.anos_crime ?? 5}
+            zona={cidade != null}
+            porDentro={cidade ? null : cidades.find((c) => c.cod === municipioSelecionado.cod)?.slug ?? null}
             onFechar={() => setSelecionado(null)}
           />
         ) : (
           <Ranking
-            linhas={linhas} topicos={topicosVisiveis} tempos={tempos}
+            linhas={linhas} topicos={topicosVisiveis} tempos={tempos} cidade={cidade?.nome ?? null}
             selecionado={selecionado} onSelecionar={setSelecionado}
           />
         )}

@@ -66,23 +66,30 @@ def _acesso(origens, tempos, unidades) -> tuple[pd.Series, pd.Series]:
     return _por_municipio(origens, nota), _por_municipio(origens, t.fillna(CURVA_EMERGENCIA[0][-1]))
 
 
-def _capacidade(origens, tempos, oferta: pd.Series, raio: float, por: int) -> pd.Series:
+def razao_oferta(origens, tempos, oferta: pd.Series, raio: float) -> pd.Series:
+    """Primeiro passo do E2SFCA: oferta de cada célula por pessoa que a alcança no raio (com peso pelo tempo)."""
     t = tempos[(tempos["minutos"] <= raio) & tempos["destino"].isin(oferta.index)].copy()
     t["w"] = _peso_distancia(t["minutos"], raio)
     t["pop"] = t["origem"].map(origens.set_index("id")["pop"])
     demanda = (t["pop"] * t["w"]).groupby(t["destino"]).sum()
-    razao = oferta / demanda  # oferta por pessoa que alcança a unidade
-    t["r"] = t["destino"].map(razao) * t["w"]
-    acessivel = t.groupby("origem")["r"].sum()
-    return _por_municipio(origens, acessivel) * por
+    return oferta / demanda
 
 
-def calcular(con: duckdb.DuckDBPyConnection, cfg: dict) -> pd.DataFrame:
+def acessivel(tempos, razao: pd.Series, raio: float) -> pd.Series:
+    """Segundo passo: cada origem soma a razão das células que alcança, com o mesmo peso pelo tempo."""
+    t = tempos[(tempos["minutos"] <= raio) & tempos["destino"].isin(razao.index)].copy()
+    t["r"] = t["destino"].map(razao) * _peso_distancia(t["minutos"], raio)
+    return t.groupby("origem")["r"].sum()
+
+
+def _capacidade(origens, tempos, oferta: pd.Series, raio: float, por: int) -> pd.Series:
+    return _por_municipio(origens, acessivel(tempos, razao_oferta(origens, tempos, oferta, raio), raio)) * por
+
+
+def conjuntos(con: duckdb.DuckDBPyConnection, cfg: dict) -> tuple[dict, dict]:
+    """Unidades que contam para cada indicador de acesso e oferta por célula de cada indicador de capacidade."""
     saude = cfg["topicos"]["saude"]
-    raio = saude["raio_capacidade_min"]
     so_sus = {"sus": True, "sus_mais_privada": False}[saude["rede"]]
-    origens = con.execute("SELECT * FROM rotas_origens").df()
-    tempos = con.execute("SELECT * FROM rotas_tempos").df()
 
     # Filtros de rede: só SUS, ou tudo o que existe
     leito = "qt_sus" if so_sus else "qt_exist"
@@ -141,6 +148,14 @@ def calcular(con: duckdb.DuckDBPyConnection, cfg: dict) -> pd.DataFrame:
             WHERE tipo = '1' AND codigo IN ('11', '12') AND {equip} GROUP BY 1"""),
             100_000, f"tomógrafos e ressonâncias ({rede}) por 100 mil hab."),
     }
+    return acessos, capacidades
+
+
+def calcular(con: duckdb.DuckDBPyConnection, cfg: dict) -> pd.DataFrame:
+    raio = cfg["topicos"]["saude"]["raio_capacidade_min"]
+    origens = con.execute("SELECT * FROM rotas_origens").df()
+    tempos = con.execute("SELECT * FROM rotas_tempos").df()
+    acessos, capacidades = conjuntos(con, cfg)
 
     linhas = []
     for indicador, conjunto in acessos.items():

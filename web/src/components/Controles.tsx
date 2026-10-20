@@ -15,6 +15,7 @@ const FAIXAS_POPULACAO = [0, 5_000, 10_000, 20_000, 50_000, 100_000, 500_000]
 
 interface Props {
   trabalho: ReactNode // seção do local de trabalho, antes dos filtros
+  cidade: string | null // dentro de uma cidade: só a busca por zona ou bairro
   config: Config
   pesos: Pesos
   topicosComDado: Set<string>
@@ -80,12 +81,13 @@ export function Controles(props: Props) {
         <div className="com-icone">
           <IconeLupa />
           <input
-            type="search" className="entrada" value={filtros.busca} aria-label="Buscar município"
-            placeholder="Buscar município (ex.: Botucatu, Atibaia…)"
+            type="search" className="entrada" value={filtros.busca}
+            aria-label={props.cidade ? 'Buscar zona ou bairro' : 'Buscar município'}
+            placeholder={props.cidade ? 'Buscar zona ou bairro (ex.: Centro, Macuco…)' : 'Buscar município (ex.: Botucatu, Atibaia…)'}
             onChange={(e) => onFiltros({ ...filtros, busca: e.target.value })}
           />
         </div>
-        <div className="duas-colunas">
+        {!props.cidade && <div className="duas-colunas">
           <label className="campo">
             <span className="rotulo-pequeno">População mínima</span>
             <select
@@ -107,7 +109,7 @@ export function Controles(props: Props) {
               {regioes.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </label>
-        </div>
+        </div>}
       </section>
 
       <section className="cartao">

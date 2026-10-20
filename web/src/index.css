@@ -133,6 +133,7 @@ input[type='range'] { accent-color: var(--accent); }
   font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: -0.01em;
 }
 .meta-dados span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voltar-estado { white-space: nowrap; text-decoration: none; }
 .pulso { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; animation: pulsar 2s ease-in-out infinite; }
 @keyframes pulsar { 50% { opacity: 0.45; } }
 
@@ -495,6 +496,8 @@ main {
 .detalhe-topo { display: flex; flex-direction: column; gap: 6px; padding: 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .detalhe-topo h2 { font-family: var(--serif); font-size: 26px; font-weight: 700; line-height: 1.1; }
 .detalhe-topo p { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.detalhe-topo .detalhe-bairros { font-family: var(--sans); font-size: 12px; line-height: 1.45; }
+.ver-por-dentro { align-self: flex-start; margin-top: 6px; text-decoration: none; }
 .detalhe-corpo { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .destaques { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
 .destaques div { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }

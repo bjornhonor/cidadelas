@@ -1,0 +1,50 @@
+# Valinhos por dentro: a mesma lógica do ranking do estado, mas comparando zonas da cidade entre si.
+# Cada indicador vira nota comparando só as zonas: a pior tira 0, a melhor 100, e as outras ficam no meio
+# (escala linear, sem corte nos extremos). A exceção é a emergência, que já é uma nota de 0 a 100 (curva do estado).
+# Ficam de fora os indicadores que só existem por município (desastres, energia, fibra, ar, custo).
+
+nome: Valinhos
+cod_ibge: 3556206
+n_zonas: 11
+corte: 0   # fração dos extremos que não estica a escala (no estado é 0,02)
+
+topicos:
+
+  seguranca:
+    peso: 30
+    indicadores:
+      # Roubo pesa mais aqui: dentro da cidade o crime letal tem poucos casos por zona (27 em 4 anos na cidade toda).
+      # 60 / 40 é escolha, não conta: medir a parcela de fato quando os dados estiverem prontos
+      roubo:         { peso: 60, sentido: menor_melhor, escala: linear, fonte: SSP-SP (BOs) }
+      crimes_letais: { peso: 40, sentido: menor_melhor, escala: linear, fonte: SSP-SP (BOs) }
+
+  saude:
+    peso: 25
+    raio_capacidade_min: 30
+    indicadores:
+      # Mesmos pesos do estado, com o tempo de carro saindo de cada setor censitário
+      tempo_infarto:         { peso: 16, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }
+      tempo_avc:             { peso: 16, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }
+      tempo_trauma:          { peso: 12, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }
+      tempo_pronto_socorro:  { peso: 12, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }
+      leitos_uti:            { peso: 10, sentido: maior_melhor, escala: linear, fonte: CNES }
+      leitos_agudos:         { peso: 10, sentido: maior_melhor, escala: linear, fonte: CNES }
+      especialistas:         { peso: 16, sentido: maior_melhor, escala: linear, fonte: CNES }
+      equipamentos:          { peso: 8,  sentido: maior_melhor, escala: linear, fonte: CNES }
+
+  infraestrutura:
+    peso: 15
+    indicadores:
+      saneamento: { peso: 100, sentido: maior_melhor, escala: linear, fonte: Censo2022 }  # água e esgoto na rede
+
+  natureza:
+    peso: 10
+    raio_perto_km: 1     # a pé
+    raio_regiao_km: 3    # de bicicleta (o "perto de casa" do estado)
+    indicadores:
+      # Mesmos pesos do estado sem ar e arborização, que não existem por zona
+      verde_perto:  { peso: 23, sentido: maior_melhor, escala: linear, fonte: MapBiomas+Censo2022 }
+      verde_regiao: { peso: 23, sentido: maior_melhor, escala: linear, fonte: MapBiomas+Censo2022 }
+      area_urbana:  { peso: 7,  sentido: menor_melhor, escala: linear, fonte: MapBiomas+Censo2022 }
+
+filtros_apenas: []
