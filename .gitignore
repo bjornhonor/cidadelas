@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.egg-info/
+node_modules/
+
+# Dados baixados e banco local: regeneráveis pelo pipeline
+data/raw/
+data/*.duckdb
+data/*.duckdb.wal
+web/dist/

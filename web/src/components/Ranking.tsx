@@ -1,0 +1,140 @@
+import { useState } from 'react'
+import type { Municipio, Notas } from '../types'
+import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from '../rotulos'
+import { formatarMinutos, type TempoTrabalho } from '../deslocamento'
+
+export interface LinhaRanking {
+  posicao: number
+  municipio: Municipio
+  notas: Notas
+}
+
+interface Props {
+  linhas: LinhaRanking[]
+  topicos: string[]
+  tempos: Map<number, TempoTrabalho> | null // só no modo presencial
+  selecionado: number | null
+  onSelecionar: (cod: number) => void
+}
+
+const POR_PAGINA = 25
+const NOTA_ALTA = 80 // nota de tópico a partir da qual a célula ganha destaque
+const PERTO_MIN = 60 // trajeto até aqui aparece em verde
+
+const nota = (v: number | null) => (v == null ? '–' : formatarNumero(v, 1))
+
+/** Pílula da nota geral: o 1º em menta cheia, 2º e 3º um tom abaixo. */
+export function PilulaNota({ valor, posicao }: { valor: number | null; posicao: number | null }) {
+  const nivel = valor == null ? 'vazia' : posicao === 1 ? 'n1' : posicao != null && posicao <= 3 ? 'n2' : ''
+  return <span className={`pilula-nota ${nivel}`}>{nota(valor)}</span>
+}
+
+function milHabitantes(p: number) {
+  return p >= 1_000_000
+    ? `${formatarNumero(p / 1_000_000, 1)} mi hab.`
+    : p >= 1_000 ? `${formatarNumero(p / 1_000)} mil hab.` : `${formatarNumero(p)} hab.`
+}
+
+export function Ranking({ linhas, topicos, tempos, selecionado, onSelecionar }: Props) {
+  const [pagina, setPagina] = useState(1)
+  const paginas = Math.max(1, Math.ceil(linhas.length / POR_PAGINA))
+  const atual = Math.min(pagina, paginas) // o filtro pode encolher a lista enquanto se está numa página adiante
+  const inicio = (atual - 1) * POR_PAGINA
+  const visiveis = linhas.slice(inicio, inicio + POR_PAGINA)
+
+  return (
+    <div className="ranking">
+      <div className="ranking-topo">
+        <div>
+          <h2>Ranking dos Municípios</h2>
+          <p>Ordenado pela nota com os pesos escolhidos</p>
+        </div>
+        <span className="aptas">{linhas.length} aptas</span>
+      </div>
+
+      {linhas.length > 0 && (
+        <div className="podio">
+          {linhas.slice(0, 3).map(({ posicao, municipio: m, notas }) => (
+            <button
+              key={m.cod} type="button" className={posicao === 1 ? 'primeiro' : ''}
+              onClick={() => onSelecionar(m.cod)}
+            >
+              <span className="podio-lugar">{posicao}º</span>
+              <div>
+                <h3>{m.nome}</h3>
+                <small>{milHabitantes(m.populacao)}</small>
+              </div>
+              <div className="podio-base">
+                <span className="podio-nota">{nota(notas.geral)}</span>
+                <span className="barrinhas" aria-hidden>
+                  {topicos.map((t) => (
+                    <span
+                      key={t} title={`${TOPICOS[t] ?? t}: ${nota(notas.topicos[t])}`}
+                      style={{ height: `${Math.max(notas.topicos[t] ?? 0, 10)}%` }}
+                    />
+                  ))}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Cidade</th>
+              <th className="num">Habitantes</th>
+              {tempos && <th className="num" title="de carro, sem trânsito">Trajeto</th>}
+              <th className="num geral">Geral</th>
+              {topicos.map((t) => <th key={t} className="num" title={TOPICOS[t]}>{TOPICOS_CURTOS[t] ?? t}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {visiveis.map(({ posicao, municipio: m, notas }) => {
+              const tempo = tempos?.get(m.cod)
+              return (
+                <tr
+                  key={m.cod}
+                  className={m.cod === selecionado ? 'selecionada' : ''}
+                  onClick={() => onSelecionar(m.cod)}
+                >
+                  <td>{posicao}</td>
+                  <td className="cidade">
+                    {m.nome}
+                    {m.cod === selecionado && <span className="ponto-selecionado" />}
+                  </td>
+                  <td className="num">{formatarNumero(m.populacao)}</td>
+                  {tempos && (
+                    <td className={`num ${tempo && tempo.minutos <= PERTO_MIN ? 'perto' : ''}`}>
+                      {tempo ? formatarMinutos(tempo.minutos) : '–'}
+                    </td>
+                  )}
+                  <td className="num geral"><PilulaNota valor={notas.geral} posicao={posicao} /></td>
+                  {topicos.map((t) => {
+                    const v = notas.topicos[t]
+                    return <td key={t} className={`num ${v != null && v >= NOTA_ALTA ? 'destaque' : ''}`}>{nota(v)}</td>
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {linhas.length === 0 && <p className="vazio">Nenhuma cidade com esses filtros.</p>}
+      </div>
+
+      <div className="paginacao">
+        <span>
+          {linhas.length ? `Exibindo ${inicio + 1}–${inicio + visiveis.length} de ${linhas.length}` : 'Nenhuma cidade'}
+        </span>
+        <div>
+          <button type="button" disabled={atual <= 1} onClick={() => setPagina(atual - 1)}>Anterior</button>
+          <strong>{atual}</strong>
+          <button type="button" disabled={atual >= paginas} onClick={() => setPagina(atual + 1)}>Próximo</button>
+        </div>
+      </div>
+    </div>
+  )
+}

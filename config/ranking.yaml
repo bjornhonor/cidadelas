@@ -1,0 +1,82 @@
+# Pesos do ranking Cidadelas.
+# Pesos são relativos: o que conta é a proporção entre eles (o app reescala).
+# "sentido": maior_melhor | menor_melhor
+# "escala" (como o valor vira nota 0–100 comparando os municípios):
+#   log (padrão, para taxas que variam em ordens de grandeza) | raiz (entre log e linear: pune pouco valor pequeno)
+#   | linear | absoluta (o valor já é uma nota 0–100)
+
+topicos:
+
+  seguranca:
+    peso: 30
+    # Casas de veraneio (Censo 2022) entram no denominador como ocupadas esta fração do ano,
+    # para não punir cidade turística pelo crime que acontece com visitantes
+    fracao_ano_uso_ocasional: 0.25
+    indicadores:
+      # Só crime violento contra a pessoa. Pesos 60 / 40 dão parcela EFETIVA ~66 / 34 (ver docs/metodologia.md)
+      crimes_letais:      { peso: 60, sentido: menor_melhor, fonte: SSP-SP }  # homicídio doloso + tentativa + latrocínio + lesão seguida de morte
+      roubo:              { peso: 40, sentido: menor_melhor, fonte: SSP-SP }  # roubo - outros + roubo de veículo
+
+  saude:
+    peso: 25
+    rede: sus_mais_privada   # sus | sus_mais_privada (com plano de saúde, conta também a rede particular)
+    raio_capacidade_min: 30
+    indicadores:
+      # Emergência > internação > consultas. Pesos 56 / 20 / 24 dão parcela EFETIVA ~53 / 23 / 24 (ver docs/metodologia.md):
+      # o pronto-socorro tira 100 em metade das cidades e quase não separa ninguém
+      # Emergência grave: tempo de carro até o hospital 24h que resolve, já convertido em nota pela curva de emergência
+      # (15 min = 100, 30 = 70, 60 = 20, 90+ = 0), média pesada pela população do município
+      tempo_infarto:         { peso: 16, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }  # hemodinâmica
+      tempo_avc:             { peso: 16, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }  # tomógrafo + UTI
+      tempo_trauma:          { peso: 12, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }  # neurocirurgião + UTI
+      tempo_pronto_socorro:  { peso: 12, sentido: maior_melhor, escala: absoluta, fonte: CNES+OSM }
+      # Internação: oferta alcançável no raio, dividida pela população que disputa essa oferta
+      leitos_uti:            { peso: 10, sentido: maior_melhor, fonte: CNES }
+      leitos_agudos:         { peso: 10, sentido: maior_melhor, fonte: CNES }  # sem psiquiatria e longa permanência
+      # Consultas e exames
+      especialistas:         { peso: 16, sentido: maior_melhor, fonte: CNES }  # cardio, derma, gineco, oftalmo, orto, uro...
+      equipamentos:          { peso: 8,  sentido: maior_melhor, fonte: CNES }  # tomógrafo, ressonância
+
+  custo:
+    peso: 15             # era 20; reduzido porque a moradia é estimada na maioria das cidades
+    imovel_m2_min: 80    # faixa de área usada para calcular o R$/m² da cidade
+    imovel_m2_max: 150
+    area_referencia_m2: 100        # imóvel alugado da cesta
+    consumo_kwh: 200               # consumo mensal de referência (família de 2–3 pessoas)
+    consumo_agua_m3: 10
+    fator_impostos_energia: 1.30   # tarifa ANEEL vem sem ICMS e PIS/COFINS (~23% por dentro em SP)
+    indicadores:
+      # Aluguel + luz + água/esgoto, em R$ por mês. Mercado ainda sem fonte por município. Linear: cada real pesa
+      # igual em qualquer faixa. O m² de compra só aparece no detalhe: sai da mesma estimativa (correlação 0,99)
+      cesta_mensal: { peso: 100, sentido: menor_melhor, escala: linear, fonte: FipeZap+Censo2010+ANEEL+SINISA }
+
+  infraestrutura:
+    peso: 15
+    indicadores:
+      # Morte e perda da casa > saúde (saneamento) > caos (apagão) > conforto. Pesos 34 / 21 / 17 / 16 / 11 dão parcela
+      # EFETIVA ~36 / 27 / 18 / 12 / 8. Desastres é metade sorte (confiabilidade 0,48), então 36% observado equivale a
+      # ~50% de importância para o risco real (ver docs/metodologia.md)
+      desastres:         { peso: 34, sentido: menor_melhor, escala: raiz, fonte: Atlas Digital de Desastres (S2iD) }  # atingidos por 100 mil
+      saneamento:        { peso: 21, sentido: maior_melhor, escala: linear, fonte: SINISA }
+      quedas_energia:    { peso: 17, sentido: menor_melhor, fonte: ANEEL }  # horas sem luz por ano (DEC)
+      internet_fibra:    { peso: 16, sentido: maior_melhor, escala: linear, fonte: Anatel }
+      ruas_transito:     { peso: 11, sentido: maior_melhor, escala: linear, fonte: Censo2022+SENATRAN+OSM }  # nota 0–100
+
+  natureza:
+    peso: 10
+    # Medido em volta de cada setor do Censo onde mora gente, com média pela população do município
+    raio_perto_km: 3     # o que dá para ver e alcançar a pé ou de bicicleta
+    raio_regiao_km: 10   # passeio de fim de semana perto de casa
+    indicadores:
+      # Ar pesa mais (mortalidade), verde forte mas menos (convívio), o resto desempata. Pesos acertados para a
+      # parcela EFETIVA de cada bloco na variação da nota ficar ~50 / 40 / 10 (ver docs/metodologia.md):
+      # os dois raios de verde andam juntos (r = 0,9) e área urbana e árvore na rua andam junto com o ar
+      ar_pm25:           { peso: 40, sentido: menor_melhor, escala: linear, fonte: SISAM (INPE) }  # média anual 2023–2025
+      # Verde = mata nativa ou plantada, campo nativo e mosaico de sítios; lavoura e pasto não contam
+      verde_perto:       { peso: 23, sentido: maior_melhor, escala: linear, fonte: MapBiomas+Censo2022 }
+      verde_regiao:      { peso: 23, sentido: maior_melhor, escala: linear, fonte: MapBiomas+Censo2022 }
+      area_urbana:       { peso: 7,  sentido: menor_melhor, escala: linear, fonte: MapBiomas+Censo2022 }  # "selva de pedra"
+      arborizacao:       { peso: 7,  sentido: maior_melhor, escala: linear, fonte: Censo2022 }
+
+# Só filtro, fora do ranking
+filtros_apenas: [populacao, altitude, temperatura_media, chuva_anual, regiao]
