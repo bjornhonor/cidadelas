@@ -25,11 +25,12 @@ SETORES = RAW / "ibge" / "SP_setores_CD2022.gpkg"
 OSM = RAW / "osm" / "sao-paulo-latest.osm.pbf"
 CRS_METROS = 31983  # SIRGAS 2000 / UTM 23S
 LUGARES = {"suburb", "quarter", "neighbourhood"}
+FOLGA_DIVISA_M = 1_000
 
 
 def setores(cod_ibge: int) -> gpd.GeoDataFrame:
-    s = gpd.read_file(SETORES, where=f"CD_MUN = '{cod_ibge}'", columns=["CD_SETOR", "CD_SIT", "v0001"])
-    s = s.rename(columns={"CD_SETOR": "cd_setor", "CD_SIT": "situacao", "v0001": "pop"})
+    s = gpd.read_file(SETORES, where=f"CD_MUN = '{cod_ibge}'", columns=["CD_SETOR", "CD_SIT", "NM_NU", "v0001"])
+    s = s.rename(columns={"CD_SETOR": "cd_setor", "CD_SIT": "situacao", "NM_NU": "nucleo", "v0001": "pop"})
     s["pop"] = pd.to_numeric(s["pop"], errors="coerce").fillna(0).astype(int)
     return s.to_crs(CRS_METROS)
 
@@ -82,13 +83,17 @@ class _Lugares(osmium.SimpleHandler):
                 self.lugares.append((n.tags["name"], lon, lat))
 
 
-def bairros_osm(contorno: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Pontos de bairro do OpenStreetMap dentro da cidade (o OSM quase não tem o contorno dos bairros)."""
-    leitor = _Lugares(contorno.to_crs(4326).total_bounds)
+def bairros_osm(s: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Pontos de bairro do OpenStreetMap na cidade, com a zona do setor mais perto (o OSM quase não tem o contorno
+    dos bairros). Vale ponto até FOLGA_DIVISA_M além da divisa: bairro de beira de divisa às vezes cai do outro lado.
+    """
+    leitor = _Lugares(s.to_crs(4326).total_bounds + np.array([-0.05, -0.05, 0.05, 0.05]))
     leitor.apply_file(str(OSM))
-    df = pd.DataFrame(leitor.lugares, columns=["nome", "lon", "lat"]).drop_duplicates("nome")
+    df = pd.DataFrame(leitor.lugares, columns=["nome", "lon", "lat"])
     pontos = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["lon"], df["lat"]), crs=4326).to_crs(CRS_METROS)
-    return pontos[pontos.within(contorno.union_all())].reset_index(drop=True)
+    pontos = gpd.sjoin_nearest(pontos, s[["zona", "geometry"]], max_distance=FOLGA_DIVISA_M, distance_col="fora_m")
+    # Só depois de filtrar pela cidade: "Centro" existe em Valinhos, Campinas e Vinhedo
+    return pontos.sort_values("fora_m").drop_duplicates("nome").drop(columns="index_right").reset_index(drop=True)
 
 
 def _nomes(s: gpd.GeoDataFrame, bairros: gpd.GeoDataFrame) -> dict[int, str]:
@@ -96,7 +101,11 @@ def _nomes(s: gpd.GeoDataFrame, bairros: gpd.GeoDataFrame) -> dict[int, str]:
     for z, g in s.groupby("zona"):
         centro = g.dissolve().geometry.iloc[0].representative_point()
         dentro = bairros[bairros["zona"] == z]
-        ordem = dentro.assign(d=dentro.distance(centro)).sort_values("d")["nome"].tolist()
+        ordem = []
+        for nome in dentro.assign(d=dentro.distance(centro)).sort_values("d")["nome"]:
+            # "Chácaras Alpina" e "Chácaras Alpinas" são o mesmo lugar
+            if not any(chave_nome(nome)[:12] == chave_nome(o)[:12] for o in ordem):
+                ordem.append(nome)
         rural = g.loc[g["situacao"] == "8", "pop"].sum() > g["pop"].sum() / 2
         base = " / ".join(ordem[:2]) if ordem else f"Zona {z}"
         nomes[int(z)] = f"{base} (rural)" if rural else base
@@ -120,6 +129,8 @@ def zonas(cod_ibge: int, slug: str, n_zonas: int) -> tuple[gpd.GeoDataFrame, gpd
         s[["cd_setor", "zona"]].sort_values(["zona", "cd_setor"]).to_csv(arquivo, index=False)
         print(f"  zonas novas gravadas em {arquivo.relative_to(RAIZ)}")
     bairros = bairros_osm(s)
-    bairros = gpd.sjoin(bairros, s[["zona", "geometry"]], predicate="within").drop(columns="index_right")
-    bairros["chave"] = bairros["nome"].map(chave_nome)
-    return s, bairros, _nomes(s, bairros)
+    # Núcleos urbanos que o próprio Censo nomeia (loteamentos e chácaras afastados) também viram bairro
+    nucleos = s.dropna(subset=["nucleo"]).assign(geometry=lambda d: d.representative_point()).drop_duplicates("nucleo")
+    nucleos = nucleos[~nucleos["nucleo"].map(chave_nome).isin(bairros["nome"].map(chave_nome))]
+    bairros = pd.concat([bairros, nucleos.rename(columns={"nucleo": "nome"})[["nome", "zona", "geometry"]]], ignore_index=True)
+    return s, bairros, _nomes(s, bairros[bairros["fora_m"].fillna(0) == 0])

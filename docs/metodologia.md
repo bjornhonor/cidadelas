@@ -280,6 +280,55 @@ o local de trabalho (endereço buscado no OpenStreetMap ou clique no mapa) vira 
 - **Custo**: a matriz de todos os pares de pontos (~1.600 × 1.600, 1 byte cada) é calculada uma vez no pipeline; o
   app só a baixa quando há local marcado, e trocar o local recalcula na hora, sem servidor.
 
+## Cidade por dentro (Valinhos)
+
+A mesma lógica, mas comparando zonas de uma cidade entre si. Por enquanto só Valinhos. Config em
+[config/cidades/valinhos.yaml](../config/cidades/valinhos.yaml); no app, "Ver por dentro" no detalhe da cidade.
+
+**Zonas.** O IBGE não tem bairros para Valinhos (o campo vem vazio nos 233 setores do Censo 2022), e o OpenStreetMap
+só tem pontos de bairro, sem contorno. Por isso as zonas são grupos de setores vizinhos: um k-means pesado pela
+população dá o centro de cada uma, e a zona com menos gente vai anexando o setor vizinho mais perto do seu centro.
+São 11 zonas contínuas, de 10,2 mil a 13,3 mil habitantes. O nome são os dois bairros do OSM mais perto do centro da
+zona. A divisão fica em `config/cidades/valinhos_setores.csv` e pode ser editada à mão.
+
+**Nota de 0 a 100 só entre as zonas.** Em cada indicador, a pior zona tira 0, a melhor 100, e as outras ficam no
+meio em escala linear, sem o corte de 2% do estado. A exceção é a emergência, que já é uma nota pela curva do estado:
+as zonas tiram de 94 a 100, e esticar 2 minutos de diferença até 0–100 daria peso a quase nada. Não há ajuste
+para poucos casos: é escolha consciente para o MVP, a ser lapidada.
+
+**Segurança.** Microdados dos BOs da SSP (portal SP Dados Criminais, 2022–2025; o portal começa em 2022). Mesmos
+crimes do estado: crimes letais (homicídio doloso, tentativa, latrocínio, lesão seguida de morte) e roubo (outros e
+de veículo). Os totais de Valinhos batem com os da série mensal oficial (653 roubos e 27 crimes letais em 4 anos).
+A taxa é por 100 mil moradores da zona por ano. Peso 60 roubo / 40 letal: o roubo pesa mais aqui porque o letal tem
+de 1 a 4 casos por zona. É escolha, não conta; falta medir a parcela de fato.
+
+Onde cada BO cai:
+- **Coordenada do BO** quando existe (52% dos letais, 78% dos roubos).
+- **Bairro do BO** quando não: crime em residência vem sem endereço nem coordenada ("vedação da divulgação"), mas com
+  o bairro. Cada nome de bairro vai para a zona onde cai a maioria dos BOs com coordenada daquele bairro; nome que
+  nunca aparece com coordenada vai pelo ponto do bairro no OSM ou pelo núcleo urbano do Censo. Nome cortado
+  ("ESPIRITO SANT") vale se for o começo de um único bairro conhecido. "Zona rural" vai para a zona com mais
+  moradores em setor rural.
+- **Sem zona:** 3 dos 27 letais (dois sem bairro nem coordenada, um com coordenada a 40 km e bairro fora do mapa) e
+  1% dos roubos.
+
+Limitação: o BO é registrado onde o crime aconteceu, não onde a vítima mora. A zona do centro comercial conta o roubo
+de quem passa por lá.
+
+**Saúde.** Igual ao estado, mas o tempo de carro sai de cada setor censitário em vez de até 20 pontos por município.
+A disputa por cada leito ou médico (quantas pessoas alcançam a unidade) vem do cálculo do estado, que considera a
+população de toda a região; só muda de onde se parte.
+
+**Infraestrutura.** Só saneamento: % de domicílios com água da rede geral e % com esgoto na rede geral ou pluvial
+(inclui fossa ligada à rede), média dos dois, do Censo 2022 por setor. O SINISA do estado não existe por setor.
+Desastres, quedas de energia e fibra só existem por município (ou conjunto elétrico) e ficam de fora.
+
+**Natureza.** Verde a até 1 km (a pé) e a até 3 km (de bicicleta, o "perto de casa" do estado) e área urbanizada a
+até 1 km, mesmo cálculo e mesmos pesos do estado. O ar fica de fora: a grade do SISAM tem 12 km, a cidade cabe numa
+célula. A arborização do Censo só existe por município.
+
+**Custo:** fora. Não há aluguel público por bairro.
+
 ## Fontes
 
 | Fonte | Conteúdo | Comando |
@@ -298,3 +347,5 @@ o local de trabalho (endereço buscado no OpenStreetMap ou clique no mapa) vira 
 | Anatel | acessos de banda larga por fibra | `coletar anatel` |
 | FipeZap + Censo 2010 | preço do m² (venda e aluguel) e aluguel de 2010 | `coletar fipezap` (o de 2010 vem no `ibge`) |
 | OSM + SENATRAN | km de rua urbana e frota de carros e motos | `coletar vias` |
+| SSP-SP (SP Dados Criminais) | BOs de crimes letais e roubo com bairro e coordenada, 2022–2025 (cidade por dentro) | `coletar ssp_bo` |
+| Censo 2022 por setor | água e esgoto dos domicílios (cidade por dentro) | `coletar censo_setores` |

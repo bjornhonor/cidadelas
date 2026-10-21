@@ -7,6 +7,7 @@ Config em config/cidades/<cidade>.yaml. Depende de `coletar ssp_bo`, `coletar ce
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 import duckdb
@@ -23,7 +24,9 @@ from ..paths import RAIZ
 from .zonas import zonas
 
 DESTINO = DESTINO_ESTADO / "cidades"
-RAIO_ROTAS_KM = 120  # destinos além disso não entram: a curva de emergência zera em 90 min
+# Destinos além disso não entram: a curva de emergência zera em 90 min, e o raio da capacidade é de 30 min
+RAIO_ACESSO_KM = 150
+RAIO_CAPACIDADE_KM = 60  # 30 min de rodovia livre
 TEMPO_ACESSO = timedelta(minutes=90)
 PREFIXOS_BAIRRO = ("bairro", "jardim", "vila", "parque", "residencial", "chacaras", "chacara", "sitios", "loteamento")
 
@@ -57,6 +60,11 @@ def _seguranca(con, s: gpd.GeoDataFrame, bairros: gpd.GeoDataFrame, cod_ibge: in
     rural = s[s["situacao"] == "8"].groupby("zona")["pop"].sum()
     if len(rural):
         por_bairro.setdefault("zonarural", rural.idxmax())
+    # O campo do BO às vezes vem cortado ("BAIRRO ESPIRITO SANT"): vale se for o começo de um só bairro conhecido
+    for chave in set(bo["chave"].dropna()) - set(por_bairro):
+        candidatos = {z for k, z in por_bairro.items() if len(chave) >= 8 and k.startswith(chave)}
+        if len(candidatos) == 1:
+            por_bairro[chave] = candidatos.pop()
 
     origem = np.where(bo["zona"].notna(), "coordenada", np.where(bo["chave"].map(por_bairro).notna(), "bairro", "sem zona"))
     bo["zona"] = bo["zona"].fillna(bo["chave"].map(por_bairro))
@@ -77,29 +85,47 @@ def _seguranca(con, s: gpd.GeoDataFrame, bairros: gpd.GeoDataFrame, cod_ibge: in
     return pd.concat(linhas).assign(topico="seguranca", anos=anos)
 
 
-def _rotear(con, s: gpd.GeoDataFrame, destinos: pd.DataFrame, slug: str, forcar: bool) -> pd.DataFrame:
-    """Tempo de carro de cada setor habitado até as unidades de saúde da região (cache no banco)."""
+def _rotear(con, s: gpd.GeoDataFrame, buscas: list[tuple[pd.DataFrame, timedelta, str]], slug: str, forcar: bool) -> pd.DataFrame:
+    """Tempo de carro de cada setor habitado até as unidades de saúde da região (cache no banco).
+
+    buscas: (destinos, tempo máximo, rótulo). Como em fontes/rotas.py, a busca longa vai só até hospitais e PS: o
+    custo cresce muito com o tempo máximo.
+    """
     tabela = f"cidade_{slug}_tempos"
     if not forcar and con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = ?", [tabela]).fetchone()[0]:
         print(f"  rotas: cache em {tabela}")
         return con.execute(f"SELECT * FROM {tabela}").df()
     import r5py  # sobe uma JVM: só quando precisa rotear
 
-    from ..fontes.rotas import URL_OSM
     from ..download import baixar
+    from ..fontes.rotas import ORIGENS_POR_LOTE, THREADS, URL_OSM
 
     origens = s[s["pop"] > 0].to_crs(4326)
     origens = gpd.GeoDataFrame({"id": origens["cd_setor"]}, geometry=origens.geometry.representative_point(), crs=4326)
-    destinos = gpd.GeoDataFrame({"id": destinos["id"]}, geometry=gpd.points_from_xy(destinos["lon"], destinos["lat"]), crs=4326)
-    print(f"  rotas: {len(origens)} setores x {len(destinos)} destinos (montar a rede leva alguns minutos)")
     rede = r5py.TransportNetwork(baixar("osm", "sao-paulo-latest.osm.pbf", URL_OSM))
-    m = r5py.TravelTimeMatrix(
-        rede, origins=origens, destinations=destinos, transport_modes=[r5py.TransportMode.CAR],
-        departure=datetime(2026, 9, 1, 10, 0), max_time=TEMPO_ACESSO,
-    )
+    lotes = [origens.iloc[i:i + ORIGENS_POR_LOTE] for i in range(0, len(origens), ORIGENS_POR_LOTE)]
+    partes = []
+    for destinos, tempo_maximo, rotulo in buscas:
+        alvo = gpd.GeoDataFrame({"id": destinos["id"]}, geometry=gpd.points_from_xy(destinos["lon"], destinos["lat"]), crs=4326)
+        feitos = 0
+
+        def rotear(lote):
+            nonlocal feitos
+            m = r5py.TravelTimeMatrix(
+                rede, origins=lote, destinations=alvo, transport_modes=[r5py.TransportMode.CAR],
+                departure=datetime(2026, 9, 1, 10, 0), max_time=tempo_maximo,  # o horário só importa para ônibus
+            )
+            feitos += len(lote)
+            print(f"    {rotulo}: {feitos}/{len(origens)} setores", flush=True)
+            return pd.DataFrame(m).dropna(subset=["travel_time"])
+
+        print(f"  rotas ({rotulo}): {len(origens)} setores x {len(alvo)} destinos, até {tempo_maximo}", flush=True)
+        with ThreadPoolExecutor(THREADS) as executor:
+            partes.extend(executor.map(rotear, lotes))
     tempos = (
-        pd.DataFrame(m).dropna(subset=["travel_time"])
+        pd.concat(partes, ignore_index=True)
         .rename(columns={"from_id": "origem", "to_id": "destino", "travel_time": "minutos"})
+        .groupby(["origem", "destino"], as_index=False)["minutos"].min()
     )
     con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM tempos")
     return tempos
@@ -115,14 +141,16 @@ def _saude(con, cfg_estado: dict, cfg: dict, s: gpd.GeoDataFrame, slug: str, for
     acessos, capacidades = saude.conjuntos(con, cfg_estado)
     destinos = con.execute("SELECT co_unidade, celula, lat, lon FROM rotas_destinos").df()
     centro = s.to_crs(4326).union_all().centroid
-    perto = np.hypot((destinos["lat"] - centro.y) * 111, (destinos["lon"] - centro.x) * 111 * np.cos(np.radians(centro.y))) <= RAIO_ROTAS_KM
-    destinos = destinos[perto]
+    km = np.hypot((destinos["lat"] - centro.y) * 111, (destinos["lon"] - centro.x) * 111 * np.cos(np.radians(centro.y)))
     unidades_acesso = set().union(*acessos.values())
-    alvo = pd.concat([
-        destinos[destinos["co_unidade"].isin(unidades_acesso)].rename(columns={"co_unidade": "id"})[["id", "lat", "lon"]],
-        destinos.groupby("celula", as_index=False)[["lat", "lon"]].mean().rename(columns={"celula": "id"}),
-    ])
-    tempos = _rotear(con, s, alvo, slug, forcar)
+    com_oferta = set().union(*(oferta.index for oferta, _, _ in capacidades.values()))
+    acesso = destinos[(km <= RAIO_ACESSO_KM) & destinos["co_unidade"].isin(unidades_acesso)]
+    celulas = destinos[(km <= RAIO_CAPACIDADE_KM) & destinos["celula"].isin(com_oferta)]
+    tempos = _rotear(con, s, [
+        (acesso.rename(columns={"co_unidade": "id"})[["id", "lat", "lon"]], TEMPO_ACESSO, "acesso"),
+        (celulas.groupby("celula", as_index=False)[["lat", "lon"]].mean().rename(columns={"celula": "id"}),
+         timedelta(minutes=raio), "capacidade"),
+    ], slug, forcar)
 
     origens_estado = con.execute("SELECT * FROM rotas_origens").df()
     tempos_estado = con.execute("SELECT * FROM rotas_tempos").df()
