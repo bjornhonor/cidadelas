@@ -504,6 +504,7 @@ main {
 .destaques div:first-child { border: 2px solid var(--accent); padding: 9px; }
 .destaques span { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .destaques strong { font-family: var(--serif); font-size: 24px; font-weight: 700; line-height: 1; color: var(--accent-strong); font-variant-numeric: tabular-nums; }
+.destaques small { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .detalhe-nota { margin: 0; font-size: 12px; color: var(--muted); }
 .detalhe section { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .detalhe h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: var(--serif); font-size: 16px; font-weight: 700; }
@@ -530,13 +531,14 @@ main {
 
 @media (max-width: 1100px) {
   .app {
-    grid-template-columns: 1fr;
+    /* minmax(0, ...): com 1fr, a coluna cresce até o conteúdo mais largo e a página estoura para o lado */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto 60vh auto;
     grid-template-areas: 'topo' 'controles' 'mapa' 'lateral';
     height: auto;
   }
   .topo { flex-wrap: wrap; padding: 10px 16px; }
-  .acoes { flex-wrap: wrap; }
+  .acoes { flex: 1 1 100%; flex-wrap: wrap; }
   .controles { overflow: visible; border-right: none; border-bottom: 1px solid var(--border); }
   .lateral { border-left: none; border-top: 1px solid var(--border); }
   .tabela-rolagem { overflow-x: auto; }

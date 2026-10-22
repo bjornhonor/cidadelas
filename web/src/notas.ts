@@ -46,6 +46,24 @@ export function notasPorIndicador(municipios: Municipio[], config: Config): Map<
   return resultado
 }
 
+/**
+ * Posição de cada valor entre os que têm valor, de 0 (o menor) a 100 (o maior); empates ficam com a média.
+ * É o que o mapa pinta: a nota geral se concentra numa faixa estreita, e pela nota crua o mapa sairia de uma cor só.
+ */
+export function percentis(valores: Map<number, number | null>): Map<number, number | null> {
+  const comValor = [...valores].filter((par): par is [number, number] => par[1] != null).sort((a, b) => a[1] - b[1])
+  const resultado = new Map<number, number | null>([...valores.keys()].map((cod) => [cod, null]))
+  const n = comValor.length
+  for (let i = 0; i < n;) {
+    let j = i
+    while (j + 1 < n && comValor[j + 1][1] === comValor[i][1]) j++
+    const percentil = n > 1 ? (100 * (i + j)) / 2 / (n - 1) : 50
+    for (let k = i; k <= j; k++) resultado.set(comValor[k][0], percentil)
+    i = j + 1
+  }
+  return resultado
+}
+
 function mediaPonderada(itens: [number | null, number][]): number | null {
   const validos = itens.filter(([v, p]) => v !== null && p > 0) as [number, number][]
   const soma = validos.reduce((s, [, p]) => s + p, 0)

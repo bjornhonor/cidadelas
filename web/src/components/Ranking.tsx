@@ -4,7 +4,8 @@ import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from '../rotulos'
 import { formatarMinutos, type TempoTrabalho } from '../deslocamento'
 
 export interface LinhaRanking {
-  posicao: number
+  posicao: number // ordem dentro do filtro
+  posicaoEstado: number // entre todos os municípios (ou todas as zonas): é a que aparece
   municipio: Municipio
   notas: Notas
 }
@@ -55,12 +56,12 @@ export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSeleci
 
       {linhas.length > 0 && (
         <div className="podio">
-          {linhas.slice(0, 3).map(({ posicao, municipio: m, notas }) => (
+          {linhas.slice(0, 3).map(({ posicao, posicaoEstado, municipio: m, notas }) => (
             <button
               key={m.cod} type="button" className={posicao === 1 ? 'primeiro' : ''}
               onClick={() => onSelecionar(m.cod)}
             >
-              <span className="podio-lugar">{posicao}º</span>
+              <span className="podio-lugar">{posicaoEstado}º</span>
               <div>
                 <h3>{m.nome}</h3>
                 <small>{milHabitantes(m.populacao)}</small>
@@ -85,7 +86,7 @@ export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSeleci
         <table>
           <thead>
             <tr>
-              <th>#</th>
+              <th title={cidade ? 'posição entre todas as zonas' : 'posição no estado (não muda com o filtro)'}>#</th>
               <th>{cidade ? 'Zona' : 'Cidade'}</th>
               <th className="num">Habitantes</th>
               {tempos && <th className="num" title="de carro, sem trânsito">Trajeto</th>}
@@ -94,7 +95,7 @@ export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSeleci
             </tr>
           </thead>
           <tbody>
-            {visiveis.map(({ posicao, municipio: m, notas }) => {
+            {visiveis.map(({ posicaoEstado: posicao, municipio: m, notas }) => {
               const tempo = tempos?.get(m.cod)
               return (
                 <tr

@@ -5,6 +5,9 @@ Critérios e decisões em [docs/metodologia.md](docs/metodologia.md); pesos em [
 
 ## Pipeline de dados
 
+Precisa de Python 3.12+ e de um JDK 21 (Java) no PATH ou em `JAVA_HOME`: o `r5py`, que calcula os tempos de carro em
+`coletar rotas`, `coletar deslocamento` e na primeira vez de `cidade`, roda o motor R5 numa JVM. As outras fontes funcionam sem Java.
+
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -e pipeline

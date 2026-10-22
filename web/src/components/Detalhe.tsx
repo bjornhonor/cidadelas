@@ -6,7 +6,9 @@ import { PilulaNota } from './Ranking'
 interface Props {
   municipio: Municipio
   notas: Notas
-  posicao: number | null
+  posicao: number // entre todos (estado ou todas as zonas), não muda com o filtro
+  total: number
+  posicaoNoFiltro?: number | null // só com filtro ativo; null = fora do filtro
   config: Config
   unidades: Record<string, string>
   tempo: TempoTrabalho | null // até o trabalho, só no modo presencial
@@ -32,7 +34,8 @@ function complemento(v: ValorIndicador, unidade: string, anosCrime: number): str
   return partes.join(' · ')
 }
 
-export function Detalhe({ municipio: m, notas, posicao, config, unidades, tempo, anosCrime, zona, porDentro, onFechar }: Props) {
+export function Detalhe(props: Props) {
+  const { municipio: m, notas, posicao, total, posicaoNoFiltro, config, unidades, tempo, anosCrime, zona, porDentro, onFechar } = props
   return (
     <div className="detalhe">
       <div className="detalhe-topo">
@@ -53,7 +56,11 @@ export function Detalhe({ municipio: m, notas, posicao, config, unidades, tempo,
           </div>
           <div>
             <span className="muted">Posição</span>
-            <strong>{posicao != null ? `${posicao}º` : 'fora do filtro'}</strong>
+            <strong>{posicao}º</strong>
+            <small>
+              de {total}{zona ? ' zonas' : ''}
+              {posicaoNoFiltro !== undefined && (posicaoNoFiltro != null ? ` · ${posicaoNoFiltro}º no filtro` : ' · fora do filtro')}
+            </small>
           </div>
           {tempo && (
             <div>

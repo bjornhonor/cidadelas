@@ -59,13 +59,14 @@ function limites(malha: FeatureCollection): [[number, number], [number, number]]
 
 interface Props {
   malha: FeatureCollection
-  notas: Map<number, number | null>
+  cores: Map<number, number | null> // 0..100 na rampa (com nota, é o percentil, não a nota)
   visiveis: Set<number>
   selecionado: number | null
   tema: Tema
   tooltip: (cod: number) => ReactNode // conteúdo do cartão ao passar o mouse
   rotuloNota: string // título da legenda
-  legenda?: [string, string, string] // rótulos da escala; padrão: 0 · pior, 50, 100 · melhor
+  legenda: [string, string, string] // rótulos do começo, do meio e do fim da escala
+  subtituloLegenda?: string
   trabalho: LocalTrabalho | null
   marcando: boolean // o próximo clique marca o local de trabalho em vez de selecionar a cidade
   onMarcar: (lat: number, lon: number) => void
@@ -73,7 +74,7 @@ interface Props {
 }
 
 export function Mapa(props: Props) {
-  const { malha, notas, visiveis, selecionado, tema, tooltip, rotuloNota, legenda, trabalho, marcando } = props
+  const { malha, cores, visiveis, selecionado, tema, tooltip, rotuloNota, legenda, subtituloLegenda, trabalho, marcando } = props
   const container = useRef<HTMLDivElement>(null)
   const mapa = useRef<MapaLibre | null>(null)
   const alfinete = useRef<Marker | null>(null)
@@ -154,10 +155,10 @@ export function Mapa(props: Props) {
       const cod = f.properties!.cod as number
       mapa.current.setFeatureState(
         { source: 'municipios', id: cod },
-        { nota: notas.get(cod) ?? null, visivel: visiveis.has(cod), selecionado: cod === selecionado },
+        { nota: cores.get(cod) ?? null, visivel: visiveis.has(cod), selecionado: cod === selecionado },
       )
     }
-  }, [pronto, malha, notas, visiveis, selecionado])
+  }, [pronto, malha, cores, visiveis, selecionado])
 
   useEffect(() => {
     if (!pronto || !mapa.current) return
@@ -209,11 +210,11 @@ export function Mapa(props: Props) {
       <div className="legenda flutuante" aria-label={`Escala de ${rotuloNota}`}>
         <div className="legenda-titulo">
           <span>{rotuloNota}</span>
-          {!legenda && <small>0 a 100</small>}
+          {subtituloLegenda && <small>{subtituloLegenda}</small>}
         </div>
         <div className="legenda-barra" />
         <div className="legenda-rotulos">
-          {(legenda ?? ['0 · pior', '50', '100 · melhor']).map((r) => <span key={r}>{r}</span>)}
+          {legenda.map((r, i) => <span key={i}>{r}</span>)}
         </div>
       </div>
     </div>

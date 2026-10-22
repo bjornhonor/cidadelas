@@ -1,7 +1,7 @@
 import type { FeatureCollection } from 'geojson'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CidadeDetalhada, Dados, Notas, Pesos } from './types'
-import { combinarNotas, notasPorIndicador, pesosIniciais } from './notas'
+import { combinarNotas, notasPorIndicador, percentis, pesosIniciais } from './notas'
 import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from './rotulos'
 import { lerTema, salvarTema, type Tema } from './tema'
 import { Controles, type Filtros } from './components/Controles'
@@ -49,11 +49,11 @@ function exportarCsv(
   const comTempo = linhas.some((l) => minutos(l.municipio.cod) != null)
   const numero = (v: number | null) => (v == null ? '' : formatarNumero(v, 1))
   const cabecalho = [
-    'Posição', slug ? 'Zona' : 'Município', 'População', 'Região', ...(comTempo ? ['Minutos até o trabalho'] : []),
+    slug ? 'Posição entre as zonas' : 'Posição no estado', slug ? 'Zona' : 'Município', 'População', 'Região', ...(comTempo ? ['Minutos até o trabalho'] : []),
     'Nota geral', ...topicos.map((t) => TOPICOS[t] ?? t),
   ]
-  const corpo = linhas.map(({ posicao, municipio: m, notas }) => [
-    String(posicao), m.nome, String(m.populacao), m.regiao_intermediaria,
+  const corpo = linhas.map(({ posicaoEstado, municipio: m, notas }) => [
+    String(posicaoEstado), m.nome, String(m.populacao), m.regiao_intermediaria,
     ...(comTempo ? [numero(minutos(m.cod))] : []),
     numero(notas.geral), ...topicos.map((t) => numero(notas.topicos[t])),
   ])
@@ -192,11 +192,16 @@ function Painel({ slug, dados, malha, cidades }: {
     .filter((m) => !tempoMax || (tempos?.get(m.cod)?.minutos ?? Infinity) <= tempoMax)
     .map((m) => m.cod)), [municipios, filtros.populacaoMin, filtros.regiao, busca, tempoMax, tempos])
 
+  // Posição entre todos (o estado ou todas as zonas): buscar ou filtrar não muda a posição de ninguém
+  const posicoesEstado = useMemo(() => new Map([...municipios]
+    .sort((a, b) => (notas.get(b.cod)!.geral ?? -1) - (notas.get(a.cod)!.geral ?? -1))
+    .map((m, i) => [m.cod, i + 1])), [municipios, notas])
+
   const linhas: LinhaRanking[] = useMemo(() => municipios
     .filter((m) => visiveis.has(m.cod))
-    .map((m) => ({ municipio: m, notas: notas.get(m.cod)!, posicao: 0 }))
-    .sort((a, b) => (b.notas.geral ?? -1) - (a.notas.geral ?? -1))
-    .map((l, i) => ({ ...l, posicao: i + 1 })), [municipios, visiveis, notas])
+    .map((m) => ({ municipio: m, notas: notas.get(m.cod)!, posicao: 0, posicaoEstado: posicoesEstado.get(m.cod)! }))
+    .sort((a, b) => a.posicaoEstado - b.posicaoEstado)
+    .map((l, i) => ({ ...l, posicao: i + 1 })), [municipios, visiveis, notas, posicoesEstado])
 
   // Colorir pelo tempo: 0 min = 100 (mais escuro) até 2 h ou mais = 0, na mesma rampa das notas
   const notasMapa = useMemo(
@@ -208,31 +213,45 @@ function Painel({ slug, dados, malha, cidades }: {
       : new Map([...notas].map(([cod, n]) => [cod, corEfetiva === 'geral' ? n.geral : n.topicos[corEfetiva]])),
     [notas, corEfetiva, tempos, municipios],
   )
+  // Notas: a cor vai pela posição (percentil), e a legenda mostra a nota da pior, da mediana e da melhor.
+  // O tempo até o trabalho fica na escala própria, em minutos
+  const coresMapa = useMemo(
+    () => (corEfetiva === 'trabalho' ? notasMapa : percentis(notasMapa)),
+    [corEfetiva, notasMapa],
+  )
+  const legendaMapa = useMemo((): [string, string, string] => {
+    if (corEfetiva === 'trabalho') return [`${ESCALA_MINUTOS / 60} h ou mais`, `${ESCALA_MINUTOS / 120} h`, '0 min']
+    const valores = [...notasMapa.values()].filter((v): v is number => v != null).sort((a, b) => a - b)
+    if (!valores.length) return ['pior', '', 'melhor']
+    const meio = valores.length / 2
+    const mediana = valores.length % 2 ? valores[Math.floor(meio)] : (valores[meio - 1] + valores[meio]) / 2
+    return [`${formatarNumero(valores[0])} · pior`, `${formatarNumero(mediana)} mediana`, `${formatarNumero(valores.at(-1)!)} · melhor`]
+  }, [corEfetiva, notasMapa])
 
   const topicosVisiveis = [...topicosComDado]
   const municipioSelecionado = selecionado != null ? municipios.find((m) => m.cod === selecionado) : undefined
-  const posicaoSelecionado = linhas.find((l) => l.municipio.cod === selecionado)?.posicao ?? null
+  const posicaoNoFiltro = linhas.find((l) => l.municipio.cod === selecionado)?.posicao ?? null
+  const filtrando = linhas.length < municipios.length
   const rotuloCor = corEfetiva === 'geral' ? 'Nota geral' : corEfetiva === 'trabalho' ? 'Tempo até o trabalho' : TOPICOS[corEfetiva]
   const textoTempo = (cod: number) => {
     const t = tempos?.get(cod)
     return t ? formatarMinutos(t.minutos) : null
   }
   const estadoDeslocamento = !local ? null : deslocamento === 'erro' ? 'erro' : deslocamentoPronto ? 'ok' : 'carregando'
-  const posicoes = new Map(linhas.map((l) => [l.municipio.cod, l.posicao]))
   const porCod = new Map(municipios.map((m) => [m.cod, m]))
 
   // Cartão do mapa ao passar o mouse: posição, nota da cor atual, tempo até o trabalho e três tópicos
   const tooltip = (cod: number) => {
     const m = porCod.get(cod)!
     const n = notas.get(cod)!
-    const posicao = posicoes.get(cod) ?? null
+    const posicao = posicoesEstado.get(cod)!
     const tempo = textoTempo(cod)
     return (
       <>
         <div className="tooltip-topo">
           <div>
-            <span className={`tooltip-posicao ${posicao ? '' : 'fora'}`}>
-              {posicao ? `${posicao}º colocado` : 'fora do filtro'}
+            <span className={`tooltip-posicao ${visiveis.has(cod) ? '' : 'fora'}`}>
+              {posicao}º de {municipios.length}{visiveis.has(cod) ? '' : ' · fora do filtro'}
             </span>
             <h4>{m.nome}</h4>
           </div>
@@ -349,13 +368,14 @@ function Painel({ slug, dados, malha, cidades }: {
         </div>
         <Mapa
           malha={malha}
-          notas={notasMapa}
+          cores={coresMapa}
           visiveis={visiveis}
           selecionado={selecionado}
           tema={tema}
           tooltip={tooltip}
           rotuloNota={rotuloCor}
-          legenda={corEfetiva === 'trabalho' ? [`${ESCALA_MINUTOS / 60} h ou mais`, `${ESCALA_MINUTOS / 120} h`, '0 min'] : undefined}
+          legenda={legendaMapa}
+          subtituloLegenda={corEfetiva === 'trabalho' ? undefined : 'cor pela posição'}
           trabalho={local}
           marcando={marcando}
           onMarcar={(lat, lon) => {
@@ -371,7 +391,9 @@ function Painel({ slug, dados, malha, cidades }: {
           <Detalhe
             municipio={municipioSelecionado}
             notas={notas.get(municipioSelecionado.cod)!}
-            posicao={posicaoSelecionado}
+            posicao={posicoesEstado.get(municipioSelecionado.cod)!}
+            total={municipios.length}
+            posicaoNoFiltro={filtrando ? posicaoNoFiltro : undefined}
             config={config}
             unidades={dados.unidades}
             tempo={tempos?.get(municipioSelecionado.cod) ?? null}
