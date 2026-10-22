@@ -1,4 +1,5 @@
-import type { Config, Municipio, Notas, ValorIndicador } from '../types'
+import type { Config, Municipio, Notas, Sentido, ValorIndicador } from '../types'
+import { contexto } from '../notas'
 import { TOPICOS, formatarNumero, rotuloIndicador } from '../rotulos'
 import { formatarMinutos, type TempoTrabalho } from '../deslocamento'
 import { PilulaNota } from './Ranking'
@@ -15,7 +16,19 @@ interface Props {
   anosCrime: number // janela dos casos de crime
   zona: boolean // é uma zona de uma cidade, não um município
   porDentro: string | null // a cidade tem a visão por dentro (slug)
+  faixa: [number, number] | null // posição com os pesos dos tópicos variando um pouco (ver faixa.ts)
+  distribuicoes: Map<string, number[]> // valores de cada indicador entre todos, para o contexto
+  naComparacao: boolean
+  comparacaoCheia: boolean
+  onComparar: () => void // põe ou tira da comparação
   onFechar: () => void
+}
+
+/** "SP: mediana 12,4 · melhor que 85% das cidades": onde o valor cai entre os outros. */
+function linhaContexto(valor: number, ordenados: number[], sentido: Sentido, zona: boolean, casas: number): string {
+  const { mediana, melhorQue } = contexto(ordenados, valor, sentido)
+  return `${zona ? 'Zonas' : 'SP'}: mediana ${formatarNumero(mediana, casas)} · melhor que ${formatarNumero(melhorQue * 100)}% `
+    + (zona ? 'das zonas' : 'das cidades')
 }
 
 /** Linha de apoio abaixo do nome do indicador, com o que cada tópico tem de específico. */
@@ -35,7 +48,8 @@ function complemento(v: ValorIndicador, unidade: string, anosCrime: number): str
 }
 
 export function Detalhe(props: Props) {
-  const { municipio: m, notas, posicao, total, posicaoNoFiltro, config, unidades, tempo, anosCrime, zona, porDentro, onFechar } = props
+  const { municipio: m, notas, posicao, total, posicaoNoFiltro, config, unidades, tempo, anosCrime, zona, porDentro } = props
+  const { faixa, distribuicoes, naComparacao, comparacaoCheia, onComparar, onFechar } = props
   return (
     <div className="detalhe">
       <div className="detalhe-topo">
@@ -46,7 +60,17 @@ export function Detalhe(props: Props) {
           {zona ? ` · zona ${m.cod} de ${m.regiao_imediata}` : ` · ${m.regiao_imediata} · ${m.regiao_intermediaria}`}
         </p>
         {m.bairros && m.bairros.length > 0 && <p className="detalhe-bairros">Bairros: {m.bairros.join(', ')}</p>}
-        {porDentro && <a className="botao-primario ver-por-dentro" href={`#cidade/${porDentro}`}>Ver por dentro →</a>}
+        <div className="detalhe-acoes">
+          {porDentro && <a className="botao-primario" href={`#cidade/${porDentro}`}>Ver por dentro →</a>}
+          <button
+            type="button" className="botao-secundario" aria-pressed={naComparacao}
+            disabled={!naComparacao && comparacaoCheia}
+            title={!naComparacao && comparacaoCheia ? 'a comparação já tem 3: tire uma antes' : undefined}
+            onClick={onComparar}
+          >
+            {naComparacao ? '✓ Na comparação' : '+ Comparar'}
+          </button>
+        </div>
       </div>
       <div className="detalhe-corpo">
         <div className="destaques">
@@ -69,6 +93,14 @@ export function Detalhe(props: Props) {
             </div>
           )}
         </div>
+        {faixa && (
+          <p className="detalhe-nota" title="300 sorteios de pesos em volta dos escolhidos; faixa do 5º ao 95º percentil">
+            {faixa[0] === faixa[1]
+              ? `Com os pesos dos tópicos variando um pouco (uns 15% a 30%), a posição não muda: ${faixa[0]}º.`
+              : `Com os pesos dos tópicos variando um pouco (uns 15% a 30%), a posição fica entre ${faixa[0]}º e `
+                + `${faixa[1]}º em 90% dos casos.`}
+          </p>
+        )}
         {tempo && Math.round(tempo.max) - Math.round(tempo.min) >= 5 && (
           <p className="detalhe-nota">
             De carro, sem trânsito, em média: {formatarMinutos(tempo.min)} da parte da cidade mais perto do trabalho,{' '}
@@ -98,14 +130,21 @@ export function Detalhe(props: Props) {
                   <tbody>
                     {indicadores.map((ind) => {
                       const v = m.indicadores[ind]
+                      const casas = v.valor >= 100 ? 0 : 1
+                      const ordenados = distribuicoes.get(ind)
                       return (
                         <tr key={ind}>
                           <td>
                             {rotuloIndicador(ind)}
                             <small className="muted">{complemento(v, unidades[ind] ?? '', anosCrime)}</small>
+                            {ordenados && (
+                              <small className="contexto">
+                                {linhaContexto(v.valor, ordenados, cfg.indicadores[ind].sentido, zona, casas)}
+                              </small>
+                            )}
                           </td>
                           <td className="num forte">{formatarNumero(notas.indicadores[ind], 0)}</td>
-                          <td className="num">{formatarNumero(v.valor, v.valor >= 100 ? 0 : 1)}</td>
+                          <td className="num">{formatarNumero(v.valor, casas)}</td>
                         </tr>
                       )
                     })}

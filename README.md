@@ -41,3 +41,18 @@ OpenStreetMap) ou marque no mapa: o app mostra o tempo de carro até cada cidade
 
 As notas e os pesos são calculados no navegador, então mexer num peso reordena o ranking na hora. Os pesos que você
 ajusta ficam salvos no navegador. O botão "restaurar" volta aos valores de `config/ranking.yaml`.
+
+O endereço acompanha a tela: pesos, filtros, cidade aberta, ordenação e comparação vão no link (o local de trabalho
+não). "Copiar link" copia esse endereço para mandar a alguém.
+
+## Testes
+
+```bash
+cd web && npm test                                   # vitest: notas, faixa de posição, link, ordenação, trajeto
+.venv/Scripts/python -m pip install -e "pipeline[dev]"
+.venv/Scripts/python -m pytest pipeline              # pytest: encolhimento, nomes, nota
+```
+
+`testes/notas_ouro.json` guarda notas que o app (`web/src/notas.ts`) e o pipeline (`_nota` em
+`calculo/infraestrutura.py`) têm de dar iguais: os dois lados testam contra ele. Se a regra da nota mudar de propósito,
+mude os dois e gere o arquivo de novo.

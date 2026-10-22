@@ -1,28 +1,32 @@
 import type { FeatureCollection } from 'geojson'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { CidadeDetalhada, Dados, Notas, Pesos } from './types'
-import { combinarNotas, notasPorIndicador, percentis, pesosIniciais } from './notas'
+import { combinarNotas, distribuicoes, notasPorIndicador, percentis, pesoTopico, pesosIniciais } from './notas'
 import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from './rotulos'
 import { lerTema, salvarTema, type Tema } from './tema'
 import { Controles, type Filtros } from './components/Controles'
 import { Mapa } from './components/Mapa'
-import { PilulaNota, Ranking, type LinhaRanking } from './components/Ranking'
+import { PilulaNota, Ranking, SeloEstimado, type LinhaRanking } from './components/Ranking'
 import { IconeBaixar, IconeLogo, IconeLua, IconeRelogio, IconeSol } from './components/Icones'
 import { Detalhe } from './components/Detalhe'
+import { Comparacao } from './components/Comparacao'
 import { Trabalho } from './components/Trabalho'
 import {
   carregarDeslocamento, formatarMinutos, lerTrabalho, salvarTrabalho, temposAteTrabalho,
   type Deslocamento, type Trabalho as TipoTrabalho,
 } from './deslocamento'
+import { faixasDePosicao } from './faixa'
+import { ORDEM_PADRAO, ordenar, type Ordem } from './ordem'
+import { ESTADO_VAZIO, MAX_COMPARAR, escreverEstado, lerEstado, lerHash, montarHash } from './url'
 
 const ESCALA_MINUTOS = 120 // cor do mapa por tempo: satura em 2 h
 
 // Cada visão guarda os seus pesos: os do estado não servem para as zonas de uma cidade
 const chavePesos = (slug: string | null) => (slug ? `cidadelas:pesos:${slug}` : 'cidadelas:pesos')
 
-/** "#cidade/valinhos" abre a cidade por dentro; sem hash, o estado. */
+/** "#cidade/valinhos" abre a cidade por dentro; sem hash (ou só com o estado da tela, "#?..."), o estado. */
 function lerSlug(): string | null {
-  return /^#cidade\/([a-z0-9-]+)$/.exec(window.location.hash)?.[1] ?? null
+  return lerHash(window.location.hash).slug
 }
 
 function lerPesosSalvos(padrao: Pesos, chave: string): Pesos {
@@ -81,8 +85,14 @@ export default function App() {
   const [cidades, setCidades] = useState<CidadeDetalhada[]>([])
   const [erro, setErro] = useState<{ slug: string | null; texto: string } | null>(null) // do carregamento de qual visão
 
+  // O Painel acompanha o endereço com replaceState, que não dispara hashchange: um hashchange é sempre alguém de
+  // fora (link colado, voltar do navegador), e o Painel recomeça lendo o estado do endereço novo
+  const [versao, setVersao] = useState(0)
   useEffect(() => {
-    const mudou = () => setSlug(lerSlug())
+    const mudou = () => {
+      setSlug(lerSlug())
+      setVersao((v) => v + 1)
+    }
     window.addEventListener('hashchange', mudou)
     return () => window.removeEventListener('hashchange', mudou)
   }, [])
@@ -111,7 +121,7 @@ export default function App() {
 
   if (erro?.slug === slug) return <p className="aviso">{erro.texto}</p>
   if (!carregado || carregado.slug !== slug) return <p className="aviso">Carregando…</p>
-  return <Painel key={slug ?? 'estado'} slug={slug} dados={carregado.dados} malha={carregado.malha} cidades={cidades} />
+  return <Painel key={`${slug ?? 'estado'}:${versao}`} slug={slug} dados={carregado.dados} malha={carregado.malha} cidades={cidades} />
 }
 
 function Painel({ slug, dados, malha, cidades }: {
@@ -124,19 +134,51 @@ function Painel({ slug, dados, malha, cidades }: {
   const cidade = dados.cidade ?? null // dentro de uma cidade, cada "município" é uma zona
   const chave = chavePesos(slug)
   const padrao = useMemo(() => pesosIniciais(config), [config])
-  const [pesos, setPesos] = useState(() => lerPesosSalvos(padrao, chave))
-  const [filtros, setFiltros] = useState<Filtros>({ populacaoMin: 0, regiao: '', busca: '', tempoMax: 0 })
-  const [corPor, setCorPor] = useState('geral')
-  const [selecionado, setSelecionado] = useState<number | null>(null)
+  // Um link compartilhado traz o estado no endereço; sem ele, valem os pesos salvos neste navegador
+  const [inicial] = useState(() =>
+    lerEstado(lerHash(window.location.hash).params, ESTADO_VAZIO(lerPesosSalvos(padrao, chave)), padrao))
+  const [pesos, setPesos] = useState(inicial.pesos)
+  const [filtros, setFiltros] = useState<Filtros>(inicial.filtros)
+  const [corPor, setCorPor] = useState(inicial.corPor)
+  const [selecionado, setSelecionado] = useState<number | null>(inicial.selecionado)
+  const [ordem, setOrdem] = useState<Ordem>(inicial.ordem)
+  const [comparando, setComparando] = useState<number[]>(inicial.comparando)
+  const [vendoComparacao, setVendoComparacao] = useState(inicial.vendoComparacao)
+  const [avisoLink, setAvisoLink] = useState<string | null>(null)
   const [trabalho, setTrabalho] = useState<TipoTrabalho>(lerTrabalho)
   const [marcando, setMarcando] = useState(false)
   const [deslocamento, setDeslocamento] = useState<Deslocamento | 'erro' | null>(null)
   const [tema, setTema] = useState<Tema>(lerTema)
   const pedido = useRef<Promise<void> | null>(null)
 
+  // O endereço acompanha a tela (sem criar uma entrada nova no histórico a cada mudança): copiar a barra de
+  // endereço já compartilha o que se está vendo
+  useEffect(() => {
+    const estado = { pesos, filtros, selecionado, corPor, ordem, comparando, vendoComparacao }
+    const hash = montarHash(slug, escreverEstado(estado, padrao))
+    if (hash !== window.location.hash) {
+      window.history.replaceState(window.history.state, '', hash || window.location.pathname + window.location.search)
+    }
+  }, [slug, padrao, pesos, filtros, selecionado, corPor, ordem, comparando, vendoComparacao])
+
   const mudarPesos = (p: Pesos) => {
     setPesos(p)
     salvarPesos(p, chave)
+  }
+  const selecionar = (cod: number | null) => {
+    setSelecionado(cod)
+    setVendoComparacao(false)
+  }
+  const alternarComparacao = (cod: number) => setComparando((c) =>
+    c.includes(cod) ? c.filter((x) => x !== cod) : c.length >= MAX_COMPARAR ? c : [...c, cod])
+  const copiarLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setAvisoLink('Link copiado')
+    } catch {
+      setAvisoLink('Copie da barra de endereço')
+    }
+    window.setTimeout(() => setAvisoLink(null), 2500)
   }
   const mudarTema = (t: Tema) => {
     salvarTema(t) // antes do render: o mapa troca as cores logo em seguida
@@ -197,11 +239,34 @@ function Painel({ slug, dados, malha, cidades }: {
     .sort((a, b) => (notas.get(b.cod)!.geral ?? -1) - (notas.get(a.cod)!.geral ?? -1))
     .map((m, i) => [m.cod, i + 1])), [municipios, notas])
 
-  const linhas: LinhaRanking[] = useMemo(() => municipios
-    .filter((m) => visiveis.has(m.cod))
-    .map((m) => ({ municipio: m, notas: notas.get(m.cod)!, posicao: 0, posicaoEstado: posicoesEstado.get(m.cod)! }))
-    .sort((a, b) => a.posicaoEstado - b.posicaoEstado)
-    .map((l, i) => ({ ...l, posicao: i + 1 })), [municipios, visiveis, notas, posicoesEstado])
+  // Ordenar por trajeto só existe com local de trabalho; sem ele, volta à nota geral sem perder a escolha
+  const ordemEfetiva = ordem.coluna === 'trajeto' && !tempos ? ORDEM_PADRAO : ordem
+  const linhas: LinhaRanking[] = useMemo(() => ordenar(
+    municipios
+      .filter((m) => visiveis.has(m.cod))
+      .map((m) => ({ municipio: m, notas: notas.get(m.cod)!, posicao: 0, posicaoEstado: posicoesEstado.get(m.cod)! })),
+    ordemEfetiva,
+    (l, coluna) => coluna === 'geral' ? l.notas.geral
+      : coluna === 'populacao' ? l.municipio.populacao
+        : coluna === 'trajeto' ? tempos?.get(l.municipio.cod)?.minutos
+          : l.notas.topicos[coluna],
+  ).map((l, i) => ({ ...l, posicao: i + 1 })), [municipios, visiveis, notas, posicoesEstado, ordemEfetiva, tempos])
+
+  // Contexto de cada indicador no detalhe (mediana e quantos estão piores) e faixa de posição. A faixa refaz o
+  // ranking 300 vezes: roda só com o detalhe ou a comparação aberta, e com valores adiados, para não travar o arraste
+  // dos pesos
+  const distribuicao = useMemo(() => distribuicoes(municipios, config), [municipios, config])
+  const porCod = useMemo(() => new Map(municipios.map((m) => [m.cod, m])), [municipios])
+  const emComparacao = comparando.filter((cod) => porCod.has(cod))
+  const mostrandoComparacao = vendoComparacao && emComparacao.length > 0
+  const precisaFaixa = mostrandoComparacao || (selecionado != null && porCod.has(selecionado))
+  const notasAdiadas = useDeferredValue(notas)
+  const pesosAdiados = useDeferredValue(pesos)
+  const faixas = useMemo(() => {
+    if (!precisaFaixa) return null
+    const pesosTopicos = Object.fromEntries([...topicosComDado].map((t) => [t, pesoTopico(pesosAdiados, t)]))
+    return faixasDePosicao(new Map([...notasAdiadas].map(([cod, n]) => [cod, n.topicos])), pesosTopicos)
+  }, [precisaFaixa, notasAdiadas, pesosAdiados, topicosComDado])
 
   // Colorir pelo tempo: 0 min = 100 (mais escuro) até 2 h ou mais = 0, na mesma rampa das notas
   const notasMapa = useMemo(
@@ -229,8 +294,12 @@ function Painel({ slug, dados, malha, cidades }: {
   }, [corEfetiva, notasMapa])
 
   const topicosVisiveis = [...topicosComDado]
-  const municipioSelecionado = selecionado != null ? municipios.find((m) => m.cod === selecionado) : undefined
-  const posicaoNoFiltro = linhas.find((l) => l.municipio.cod === selecionado)?.posicao ?? null
+  const municipioSelecionado = selecionado != null ? porCod.get(selecionado) : undefined
+  // Posição pela nota geral entre as que passam no filtro (não pela ordenação escolhida na tabela)
+  const posicaoSelecionado = selecionado != null ? posicoesEstado.get(selecionado) : undefined
+  const posicaoNoFiltro = selecionado != null && visiveis.has(selecionado)
+    ? linhas.filter((l) => l.posicaoEstado <= posicaoSelecionado!).length
+    : null
   const filtrando = linhas.length < municipios.length
   const rotuloCor = corEfetiva === 'geral' ? 'Nota geral' : corEfetiva === 'trabalho' ? 'Tempo até o trabalho' : TOPICOS[corEfetiva]
   const textoTempo = (cod: number) => {
@@ -238,7 +307,6 @@ function Painel({ slug, dados, malha, cidades }: {
     return t ? formatarMinutos(t.minutos) : null
   }
   const estadoDeslocamento = !local ? null : deslocamento === 'erro' ? 'erro' : deslocamentoPronto ? 'ok' : 'carregando'
-  const porCod = new Map(municipios.map((m) => [m.cod, m]))
 
   // Cartão do mapa ao passar o mouse: posição, nota da cor atual, tempo até o trabalho e três tópicos
   const tooltip = (cod: number) => {
@@ -271,7 +339,10 @@ function Painel({ slug, dados, malha, cidades }: {
           {topicosVisiveis.filter((t) => t !== corEfetiva).slice(0, 3).map((t) => (
             <div key={t}>
               <span>{TOPICOS_CURTOS[t] ?? t}</span>
-              <strong>{n.topicos[t] != null ? formatarNumero(n.topicos[t]!, 1) : '–'}</strong>
+              <strong>
+                {t === 'custo' && <SeloEstimado municipio={m} />}
+                {n.topicos[t] != null ? formatarNumero(n.topicos[t]!, 1) : '–'}
+              </strong>
             </div>
           ))}
         </div>
@@ -316,6 +387,12 @@ function Painel({ slug, dados, malha, cidades }: {
               <IconeLua /> Escuro
             </button>
           </div>
+          <button
+            type="button" className="botao-secundario" onClick={copiarLink}
+            title="Copiar um link com os pesos, os filtros e a cidade aberta (o local de trabalho não vai junto)"
+          >
+            {avisoLink ?? 'Copiar link'}
+          </button>
           <button
             type="button" className="botao-primario" disabled={!linhas.length}
             title="Baixar o ranking filtrado em CSV"
@@ -364,6 +441,12 @@ function Painel({ slug, dados, malha, cidades }: {
             </select>
           </label>
           <span className="no-filtro">{linhas.length} {cidade ? 'zonas' : 'cidades'} no filtro</span>
+          <button
+            type="button" className="ir-controles flutuante so-estreito"
+            onClick={() => document.getElementById('controles')?.scrollIntoView({ behavior: 'smooth' })}
+          >
+            Filtros e pesos ↓
+          </button>
           {marcando && <span className="marcando-aviso">Clique no mapa onde fica o trabalho</span>}
         </div>
         <Mapa
@@ -382,16 +465,37 @@ function Painel({ slug, dados, malha, cidades }: {
             mudarTrabalho({ modo: 'presencial', local: { lat, lon, rotulo: `ponto marcado no mapa` } })
             setMarcando(false)
           }}
-          onSelecionar={setSelecionado}
+          onSelecionar={selecionar}
         />
       </main>
 
       <section className="lateral">
-        {municipioSelecionado ? (
+        {emComparacao.length > 0 && !mostrandoComparacao && (
+          <div className="barra-comparacao">
+            <span>Comparando <strong>{emComparacao.map((cod) => porCod.get(cod)!.nome).join(', ')}</strong></span>
+            <button type="button" className="link" onClick={() => setVendoComparacao(true)}>ver lado a lado</button>
+            <button type="button" className="link" onClick={() => setComparando([])}>limpar</button>
+          </div>
+        )}
+        {mostrandoComparacao ? (
+          <Comparacao
+            municipios={emComparacao.map((cod) => porCod.get(cod)!)}
+            notas={notas}
+            posicoes={posicoesEstado}
+            faixas={faixas}
+            total={municipios.length}
+            config={config}
+            unidades={dados.unidades}
+            zona={cidade != null}
+            onAbrir={selecionar}
+            onRemover={alternarComparacao}
+            onFechar={() => setVendoComparacao(false)}
+          />
+        ) : municipioSelecionado ? (
           <Detalhe
             municipio={municipioSelecionado}
             notas={notas.get(municipioSelecionado.cod)!}
-            posicao={posicoesEstado.get(municipioSelecionado.cod)!}
+            posicao={posicaoSelecionado!}
             total={municipios.length}
             posicaoNoFiltro={filtrando ? posicaoNoFiltro : undefined}
             config={config}
@@ -400,12 +504,17 @@ function Painel({ slug, dados, malha, cidades }: {
             anosCrime={cidade?.anos_crime ?? 5}
             zona={cidade != null}
             porDentro={cidade ? null : cidades.find((c) => c.cod === municipioSelecionado.cod)?.slug ?? null}
-            onFechar={() => setSelecionado(null)}
+            faixa={faixas?.get(municipioSelecionado.cod) ?? null}
+            distribuicoes={distribuicao}
+            naComparacao={emComparacao.includes(municipioSelecionado.cod)}
+            comparacaoCheia={emComparacao.length >= MAX_COMPARAR}
+            onComparar={() => alternarComparacao(municipioSelecionado.cod)}
+            onFechar={() => selecionar(null)}
           />
         ) : (
           <Ranking
             linhas={linhas} topicos={topicosVisiveis} tempos={tempos} cidade={cidade?.nome ?? null}
-            selecionado={selecionado} onSelecionar={setSelecionado}
+            selecionado={selecionado} ordem={ordemEfetiva} onOrdenar={setOrdem} onSelecionar={selecionar}
           />
         )}
       </section>

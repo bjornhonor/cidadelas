@@ -70,7 +70,7 @@ export function Controles(props: Props) {
     topicosComDado.has(t) && somaAtivos > 0 ? Math.round((100 * pesoTopico(pesos, t)) / somaAtivos) : null
 
   return (
-    <aside className="controles">
+    <aside className="controles" id="controles">
       {props.trabalho}
 
       <section className="cartao">

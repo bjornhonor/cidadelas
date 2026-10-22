@@ -2,10 +2,11 @@ import { useState } from 'react'
 import type { Municipio, Notas } from '../types'
 import { TOPICOS, TOPICOS_CURTOS, formatarNumero } from '../rotulos'
 import { formatarMinutos, type TempoTrabalho } from '../deslocamento'
+import { ehOrdemPadrao, proximaOrdem, type Ordem } from '../ordem'
 
 export interface LinhaRanking {
-  posicao: number // ordem dentro do filtro
-  posicaoEstado: number // entre todos os municípios (ou todas as zonas): é a que aparece
+  posicao: number // ordem dentro do filtro, na ordenação escolhida
+  posicaoEstado: number // entre todos os municípios (ou todas as zonas), pela nota geral: é a que aparece
   municipio: Municipio
   notas: Notas
 }
@@ -16,6 +17,8 @@ interface Props {
   tempos: Map<number, TempoTrabalho> | null // só no modo presencial
   cidade: string | null // dentro de uma cidade, as linhas são zonas
   selecionado: number | null
+  ordem: Ordem
+  onOrdenar: (o: Ordem) => void
   onSelecionar: (cod: number) => void
 }
 
@@ -31,30 +34,59 @@ export function PilulaNota({ valor, posicao }: { valor: number | null; posicao: 
   return <span className={`pilula-nota ${nivel}`}>{nota(valor)}</span>
 }
 
+/** Moradia estimada pelo Censo 2010 (cidade fora do FipeZap): o custo vem com um "≈". */
+export function SeloEstimado({ municipio }: { municipio: Municipio }) {
+  if (!municipio.indicadores.cesta_mensal?.estimado) return null
+  return <span className="estimado" title="custo com moradia estimada (cidade fora do FipeZap)">≈</span>
+}
+
 function milHabitantes(p: number) {
   return p >= 1_000_000
     ? `${formatarNumero(p / 1_000_000, 1)} mi hab.`
     : p >= 1_000 ? `${formatarNumero(p / 1_000)} mil hab.` : `${formatarNumero(p)} hab.`
 }
 
-export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSelecionar }: Props) {
+export function Ranking({ linhas, topicos, tempos, cidade, selecionado, ordem, onOrdenar, onSelecionar }: Props) {
   const [pagina, setPagina] = useState(1)
   const paginas = Math.max(1, Math.ceil(linhas.length / POR_PAGINA))
   const atual = Math.min(pagina, paginas) // o filtro pode encolher a lista enquanto se está numa página adiante
   const inicio = (atual - 1) * POR_PAGINA
   const visiveis = linhas.slice(inicio, inicio + POR_PAGINA)
+  const padrao = ehOrdemPadrao(ordem)
+  const rotuloColuna = (c: string) =>
+    c === 'geral' ? 'nota geral' : c === 'populacao' ? 'habitantes' : c === 'trajeto' ? 'trajeto' : TOPICOS[c] ?? c
+
+  // Cabeçalho clicável: o botão ordena, e o aria-sort diz a ordem atual a quem usa leitor de tela
+  const cabecalho = (coluna: string, texto: string, classe: string, titulo?: string) => {
+    const ativa = ordem.coluna === coluna
+    return (
+      <th
+        key={coluna} className={`${classe} ordenavel ${ativa ? 'ativa' : ''}`} title={titulo}
+        aria-sort={ativa ? (ordem.crescente ? 'ascending' : 'descending') : 'none'}
+      >
+        <button type="button" onClick={() => onOrdenar(proximaOrdem(ordem, coluna))}>
+          {texto}{ativa && <span aria-hidden>{ordem.crescente ? ' ↑' : ' ↓'}</span>}
+        </button>
+      </th>
+    )
+  }
 
   return (
     <div className="ranking">
       <div className="ranking-topo">
         <div>
           <h2>{cidade ? `Zonas de ${cidade}` : 'Ranking dos Municípios'}</h2>
-          <p>{cidade ? 'Notas comparando só as zonas entre si (a pior tira 0, a melhor 100)' : 'Ordenado pela nota com os pesos escolhidos'}</p>
+          <p>
+            {!padrao
+              ? `Ordenado por ${rotuloColuna(ordem.coluna)} (${ordem.crescente ? 'menor' : 'maior'} primeiro)`
+              : cidade ? 'Notas comparando só as zonas entre si (a pior tira 0, a melhor 100)' : 'Ordenado pela nota com os pesos escolhidos'}
+          </p>
         </div>
         <span className="aptas">{linhas.length} aptas</span>
       </div>
 
-      {linhas.length > 0 && (
+      {/* O pódio é dos três melhores pela nota geral; em outra ordenação ele sai para não confundir */}
+      {linhas.length > 0 && padrao && (
         <div className="podio">
           {linhas.slice(0, 3).map(({ posicao, posicaoEstado, municipio: m, notas }) => (
             <button
@@ -88,25 +120,38 @@ export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSeleci
             <tr>
               <th title={cidade ? 'posição entre todas as zonas' : 'posição no estado (não muda com o filtro)'}>#</th>
               <th>{cidade ? 'Zona' : 'Cidade'}</th>
-              <th className="num">Habitantes</th>
-              {tempos && <th className="num" title="de carro, sem trânsito">Trajeto</th>}
-              <th className="num geral">Geral</th>
-              {topicos.map((t) => <th key={t} className="num" title={TOPICOS[t]}>{TOPICOS_CURTOS[t] ?? t}</th>)}
+              {cabecalho('populacao', 'Habitantes', 'num')}
+              {tempos && cabecalho('trajeto', 'Trajeto', 'num', 'de carro, sem trânsito')}
+              {cabecalho('geral', 'Geral', 'num geral')}
+              {topicos.map((t) => cabecalho(
+                t, TOPICOS_CURTOS[t] ?? t, 'num',
+                t === 'custo' && !cidade ? 'Custo de vida (≈: moradia estimada, cidade fora do FipeZap)' : TOPICOS[t],
+              ))}
             </tr>
           </thead>
           <tbody>
             {visiveis.map(({ posicaoEstado: posicao, municipio: m, notas }) => {
               const tempo = tempos?.get(m.cod)
+              const selecionada = m.cod === selecionado
               return (
                 <tr
                   key={m.cod}
-                  className={m.cod === selecionado ? 'selecionada' : ''}
+                  className={selecionada ? 'selecionada' : ''}
+                  tabIndex={0}
+                  aria-selected={selecionada}
+                  aria-label={`${m.nome}, ${posicao}º, nota ${nota(notas.geral)}`}
                   onClick={() => onSelecionar(m.cod)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelecionar(m.cod)
+                    }
+                  }}
                 >
                   <td>{posicao}</td>
                   <td className="cidade">
                     {m.nome}
-                    {m.cod === selecionado && <span className="ponto-selecionado" />}
+                    {selecionada && <span className="ponto-selecionado" />}
                   </td>
                   <td className="num">{formatarNumero(m.populacao)}</td>
                   {tempos && (
@@ -117,7 +162,11 @@ export function Ranking({ linhas, topicos, tempos, cidade, selecionado, onSeleci
                   <td className="num geral"><PilulaNota valor={notas.geral} posicao={posicao} /></td>
                   {topicos.map((t) => {
                     const v = notas.topicos[t]
-                    return <td key={t} className={`num ${v != null && v >= NOTA_ALTA ? 'destaque' : ''}`}>{nota(v)}</td>
+                    return (
+                      <td key={t} className={`num ${v != null && v >= NOTA_ALTA ? 'destaque' : ''}`}>
+                        {t === 'custo' && <SeloEstimado municipio={m} />}{nota(v)}
+                      </td>
+                    )
                   })}
                 </tr>
               )

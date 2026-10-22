@@ -1,4 +1,4 @@
-import type { Config, Municipio, Notas, Pesos } from './types'
+import type { Config, Municipio, Notas, Pesos, Sentido } from './types'
 
 const CORTE = 0.02 // os 2% extremos de cada ponta não esticam a escala
 
@@ -62,6 +62,41 @@ export function percentis(valores: Map<number, number | null>): Map<number, numb
     i = j + 1
   }
   return resultado
+}
+
+/** Valores de cada indicador entre todos os que têm dado, em ordem crescente: a régua do contexto no detalhe. */
+export function distribuicoes(municipios: Municipio[], config: Config): Map<string, number[]> {
+  const resultado = new Map<string, number[]>()
+  for (const topico of Object.values(config.topicos)) {
+    for (const indicador of Object.keys(topico.indicadores)) {
+      const valores = municipios.flatMap((m) => (m.indicadores[indicador] ? [m.indicadores[indicador].valor] : []))
+      if (valores.length) resultado.set(indicador, valores.sort((a, b) => a - b))
+    }
+  }
+  return resultado
+}
+
+/** Quantos valores de `ordenados` são menores que `v` (ou menores ou iguais, com `inclusive`), por busca binária. */
+function quantosAbaixo(ordenados: number[], v: number, inclusive = false): number {
+  let [lo, hi] = [0, ordenados.length]
+  while (lo < hi) {
+    const meio = (lo + hi) >> 1
+    if (ordenados[meio] < v || (inclusive && ordenados[meio] === v)) lo = meio + 1
+    else hi = meio
+  }
+  return lo
+}
+
+/**
+ * Onde um valor cai entre os outros: a mediana e a fração dos OUTROS que estão piores (0..1).
+ * Empate não conta como pior. `ordenados` inclui o próprio valor.
+ */
+export function contexto(ordenados: number[], valor: number, sentido: Sentido): { mediana: number; melhorQue: number } {
+  const n = ordenados.length
+  const mediana = quantil(ordenados, 0.5)
+  if (n < 2) return { mediana, melhorQue: 0 }
+  const piores = sentido === 'maior_melhor' ? quantosAbaixo(ordenados, valor) : n - quantosAbaixo(ordenados, valor, true)
+  return { mediana, melhorQue: piores / (n - 1) }
 }
 
 function mediaPonderada(itens: [number | null, number][]): number | null {

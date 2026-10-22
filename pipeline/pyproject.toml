@@ -17,6 +17,12 @@ dependencies = [
     "r5py>=1.0",  # tempos de carro; precisa de Java 21 (rotas, deslocamento, cidade)
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
